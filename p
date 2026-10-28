@@ -1,1 +1,2 @@
-oke
+satu kata
+dua kata
