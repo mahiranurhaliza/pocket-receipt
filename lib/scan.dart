@@ -4,6 +4,9 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:image_picker/image_picker.dart';
+import 'models/receipt_model.dart';
+import 'services/database_service.dart';
+import 'services/ocr_service.dart';
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({
@@ -120,42 +123,44 @@ class _ScanScreenState extends State<ScanScreen>
   }
 
   Future<void> _captureImage() async {
-    final controller = _cameraController;
-    if (controller == null ||
-        !controller.value.isInitialized ||
-        _capturing) {
-      return;
-    }
-
-    setState(() => _capturing = true);
-    try {
-      final image = await controller.takePicture();
-      final bytes = await image.readAsBytes();
-      if (!mounted) return;
-      setState(() => _selectedImage = bytes);
-      widget.onImageCaptured?.call(image.path);
-    } on CameraException catch (error) {
-      _showError(error.description ?? error.code);
-    } finally {
-      if (mounted) setState(() => _capturing = false);
-    }
+  final controller = _cameraController;
+  if (controller == null ||
+      !controller.value.isInitialized ||
+      _capturing) {
+    return;
   }
 
-  Future<void> _selectImage() async {
-    try {
-      final image = await _imagePicker.pickImage(
-        source: ImageSource.gallery,
-      );
-      if (image == null) return;
-
-      final bytes = await image.readAsBytes();
-      if (!mounted) return;
-      setState(() => _selectedImage = bytes);
-      widget.onImageSelected?.call(image.path);
-    } catch (error) {
-      _showError(error.toString());
-    }
+  setState(() => _capturing = true);
+  try {
+    final image = await controller.takePicture();
+    final bytes = await image.readAsBytes();
+    if (!mounted) return;
+    setState(() => _selectedImage = bytes);
+    widget.onImageCaptured?.call(image.path);
+    await _processAndSaveReceipt(image.path); // <-- Tambahan sistem
+  } on CameraException catch (error) {
+    _showError(error.description ?? error.code);
+  } finally {
+    if (mounted) setState(() => _capturing = false);
   }
+}
+
+Future<void> _selectImage() async {
+  try {
+    final image = await _imagePicker.pickImage(
+      source: ImageSource.gallery,
+    );
+    if (image == null) return;
+
+    final bytes = await image.readAsBytes();
+    if (!mounted) return;
+    setState(() => _selectedImage = bytes);
+    widget.onImageSelected?.call(image.path);
+    await _processAndSaveReceipt(image.path); // <-- Tambahan sistem
+  } catch (error) {
+    _showError(error.toString());
+  }
+}
 
   void _showError(String message) {
     if (!mounted) return;
@@ -163,6 +168,170 @@ class _ScanScreenState extends State<ScanScreen>
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
   }
+
+Future<void> _processAndSaveReceipt(String imagePath) async {
+  // Tampilkan indikator loading saat OCR membaca teks struk
+  showDialog(
+    context: context,
+    barrierDismissible: false,
+    builder: (_) => const Center(
+      child: CircularProgressIndicator(color: Color(0xFFF05A5A)),
+    ),
+  );
+
+  OcrResult ocrResult;
+  try {
+    ocrResult = await OcrService.scanReceipt(imagePath);
+  } catch (_) {
+    ocrResult = OcrResult(storeName: '', totalAmount: 0, rawText: '');
+  }
+
+  if (!mounted) return;
+  Navigator.of(context).pop(); // Tutup loading
+
+  final storeController = TextEditingController(text: ocrResult.storeName);
+  final amountController = TextEditingController(
+    text: ocrResult.totalAmount > 0
+        ? ocrResult.totalAmount.toStringAsFixed(0)
+        : '',
+  );
+  String selectedCategory = 'Makanan';
+  final categories = ['Makanan', 'Belanja', 'Transportasi', 'Tagihan', 'Lainnya'];
+
+  await showModalBottomSheet(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: const Color(0xFF262626),
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+    ),
+    builder: (ctx) {
+      return StatefulBuilder(
+        builder: (ctx, setModalState) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 24,
+              right: 24,
+              top: 24,
+              bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Detail Struk Belanja',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: storeController,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Nama Toko',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white30),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFFF05A5A)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: amountController,
+                  keyboardType: TextInputType.number,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Total Harga (Rp)',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white30),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Color(0xFFF05A5A)),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: selectedCategory,
+                  dropdownColor: const Color(0xFF262626),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'Kategori',
+                    labelStyle: TextStyle(color: Colors.white70),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: Colors.white30),
+                    ),
+                  ),
+                  items: categories
+                      .map((cat) => DropdownMenuItem(
+                            value: cat,
+                            child: Text(cat),
+                          ))
+                      .toList(),
+                  onChanged: (val) {
+                    if (val != null) {
+                      setModalState(() => selectedCategory = val);
+                    }
+                  },
+                ),
+                const SizedBox(height: 20),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFF05A5A),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () async {
+                      final store = storeController.text.trim().isEmpty
+                          ? 'Toko Tanpa Nama'
+                          : storeController.text.trim();
+                      final amount =
+                          double.tryParse(amountController.text.trim()) ?? 0;
+
+                      final newReceipt = ReceiptModel(
+                        storeName: store,
+                        category: selectedCategory,
+                        date: DateTime.now(),
+                        totalAmount: amount,
+                        imagePath: imagePath,
+                      );
+
+                      await DatabaseService.instance.insertReceipt(newReceipt);
+
+                      if (!ctx.mounted) return;
+                      Navigator.of(ctx).pop();
+                      setState(() => _selectedImage = null);
+                      _showError('Struk berhasil disimpan ke riwayat!');
+                    },
+                    child: const Text(
+                      'Simpan Struk',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    },
+  );
+}
 
   @override
   void dispose() {
