@@ -265,7 +265,6 @@ class _BarChartPainter extends CustomPainter {
   void _drawDashedLine(Canvas canvas, Offset start, Offset end, Paint paint) {
     double dashWidth = 3.0;
     double dashSpace = 3.0;
-    double distance = (end.dx - start.dx);
     double startX = start.dx;
 
     while (startX < end.dx) {

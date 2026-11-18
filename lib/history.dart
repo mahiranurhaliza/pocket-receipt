@@ -113,29 +113,34 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
       final transactions = entry.value.map((r) {
         final mappedProducts = r.items.isNotEmpty
-            ? r.items
-                .map((item) => HistoryProduct(
-                      name: '${item.name} (${item.quantity}x)',
-                      price: _formatRupiah(item.price),
-                    ))
-                .toList()
-            : [
-                HistoryProduct(
-                  name: 'Total Belanja (${r.category})',
-                  price: _formatRupiah(r.totalAmount),
-                ),
-              ];
+         ? r.items
+             .map((item) => HistoryProduct(
+                   name: item.name,
+                   quantity: item.quantity,
+                   rawPrice: item.price,
+                   price: _formatRupiah(item.price),
+                 ))
+             .toList()
+         : [
+             HistoryProduct(
+               name: r.storeName,
+               quantity: 1,
+               rawPrice: r.totalAmount,
+               price: _formatRupiah(r.totalAmount),
+             ),
+           ];
 
-        return _HistoryTransaction(
-          id: r.id,
-          merchant: r.storeName,
-          amount: _formatRupiah(r.totalAmount),
-          products: mappedProducts,
-          detailTotal: _formatRupiah(r.totalAmount),
-          sourceOfFunds: r.sourceOfFunds,
-          category: r.category,
-          imagePath: r.imagePath,
-        );
+     return _HistoryTransaction(
+       id: r.id,
+       merchant: r.storeName,
+       amount: _formatRupiah(r.totalAmount),
+       products: mappedProducts,
+       detailTotal: _formatRupiah(r.totalAmount),
+       sourceOfFunds: r.sourceOfFunds,
+       category: r.category,
+       note: r.note,
+       imagePath: r.imagePath,
+     );
       }).toList();
 
       return _HistoryDay(
@@ -410,6 +415,7 @@ class _DayCard extends StatelessWidget {
                       total: day.transactions[index].detailTotal,
                       sourceOfFunds: day.transactions[index].sourceOfFunds,
                       category: day.transactions[index].category,
+                      note: day.transactions[index].note,
                       receiptAsset: day.transactions[index].imagePath,
                     ),
                   ),
@@ -488,6 +494,7 @@ class _HistoryTransaction {
     required this.detailTotal,
     required this.sourceOfFunds,
     required this.category,
+    required this.note,
     this.imagePath,
   });
 
@@ -498,5 +505,6 @@ class _HistoryTransaction {
   final String detailTotal;
   final String sourceOfFunds;
   final String category;
+  final String note;
   final String? imagePath;
 }

@@ -30,6 +30,7 @@ class ReceiptModel {
   final String category;
   final String sourceOfFunds;
   final String? imagePath;
+  final String note;
   final List<ReceiptItem> items;
 
   ReceiptModel({
@@ -40,6 +41,7 @@ class ReceiptModel {
     required this.category,
     this.sourceOfFunds = 'Cash',
     this.imagePath,
+    this.note = '',
     this.items = const [],
   });
 
@@ -52,10 +54,14 @@ class ReceiptModel {
       'category': category,
       'source_of_funds': sourceOfFunds,
       'image_path': imagePath,
+      'note': note,
     };
   }
 
-  factory ReceiptModel.fromMap(Map<String, dynamic> map, {List<ReceiptItem> items = const []}) {
+  factory ReceiptModel.fromMap(
+    Map<String, dynamic> map, {
+    List<ReceiptItem> items = const [],
+  }) {
     return ReceiptModel(
       id: map['id'],
       storeName: map['store_name'],
@@ -64,6 +70,7 @@ class ReceiptModel {
       category: map['category'] ?? 'Belanja',
       sourceOfFunds: map['source_of_funds'] ?? 'Cash',
       imagePath: map['image_path'],
+      note: map['note'] ?? '',
       items: items,
     );
   }

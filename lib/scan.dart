@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:intl/intl.dart';
 import 'models/receipt_model.dart';
 import 'services/database_service.dart';
 import 'services/ocr_service.dart';
@@ -185,20 +186,53 @@ class _ScanScreenState extends State<ScanScreen>
     try {
       ocrResult = await OcrService.scanReceipt(imagePath);
     } catch (_) {
-      ocrResult = OcrResult(storeName: '', totalAmount: 0, rawText: '');
+      ocrResult = OcrResult(
+        storeName: '',
+        totalAmount: 0,
+        rawText: '',
+        items: [ReceiptItem(name: 'Item 1', quantity: 1, price: 0)],
+      );
     }
 
     if (!mounted) return;
     Navigator.of(context).pop();
 
     final storeController = TextEditingController(text: ocrResult.storeName);
-    final amountController = TextEditingController(
-      text: ocrResult.totalAmount > 0
-          ? ocrResult.totalAmount.toStringAsFixed(0)
-          : '',
+
+    // Simpan harga satuan agar saat Qty diubah, total harga baris ikut dikalikan Qty
+    final blockedWords = RegExp(
+      r'\b(total|total item|total belanja|total disc|subtotal|sub total|jumlah|tunai|kembalian|ppn|dpp)\b',
+      caseSensitive: false,
     );
+
+    final filteredOcrItems = ocrResult.items
+        .where((item) => !blockedWords.hasMatch(item.name.trim()))
+        .toList();
+
+    final List<Map<String, dynamic>> itemRows = (filteredOcrItems.isNotEmpty
+            ? filteredOcrItems
+            : [ReceiptItem(name: '', quantity: 1, price: 0)])
+        .map((item) {
+      final qty = item.quantity > 0 ? item.quantity : 1;
+      final unitPrice = qty > 0 ? (item.price / qty) : item.price;
+      return <String, dynamic>{
+        'name': TextEditingController(text: item.name),
+        'qty': TextEditingController(text: qty.toString()),
+        'price': TextEditingController(
+          text: item.price > 0 ? item.price.toStringAsFixed(0) : '',
+        ),
+        'unitPrice': unitPrice,
+      };
+    }).toList();
+
     String selectedCategory = 'Makanan';
-    final categories = ['Makanan', 'Belanja', 'Transportasi', 'Tagihan', 'Lainnya'];
+    final categories = [
+      'Makanan',
+      'Belanja',
+      'Transportasi',
+      'Tagihan',
+      'Lainnya'
+    ];
 
     String selectedSourceOfFunds = 'Cash';
     final List<String> fundSources = [
@@ -212,6 +246,18 @@ class _ScanScreenState extends State<ScanScreen>
       'Mandiri',
     ];
 
+    double calculateTotal() {
+      double total = 0;
+      for (final row in itemRows) {
+        final priceCtrl = row['price'] as TextEditingController;
+        final p = double.tryParse(
+                priceCtrl.text.replaceAll(RegExp(r'[^0-9]'), '')) ??
+            0;
+        total += p;
+      }
+      return total;
+    }
+
     await showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -222,158 +268,387 @@ class _ScanScreenState extends State<ScanScreen>
       builder: (ctx) {
         return StatefulBuilder(
           builder: (ctx, setModalState) {
+            final autoTotal = calculateTotal();
+            final formattedTotal = NumberFormat.currency(
+              locale: 'id_ID',
+              symbol: 'Rp',
+              decimalDigits: 0,
+            ).format(autoTotal);
+
             return Padding(
               padding: EdgeInsets.only(
-                left: 24,
-                right: 24,
+                left: 20,
+                right: 20,
                 top: 24,
                 bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
               ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Detail Struk Belanja',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: storeController,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Nama Toko',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white30),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Color(0xFFF05A5A)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: amountController,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Total Harga (Rp)',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white30),
-                      ),
-                      focusedBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Color(0xFFF05A5A)),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedCategory,
-                    dropdownColor: const Color(0xFF262626),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Kategori',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white30),
-                      ),
-                    ),
-                    items: categories
-                        .map((cat) => DropdownMenuItem(
-                              value: cat,
-                              child: Text(cat),
-                            ))
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setModalState(() => selectedCategory = val);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedSourceOfFunds,
-                    dropdownColor: const Color(0xFF262626),
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'Sumber Dana (Cash / E-Wallet / Bank)',
-                      labelStyle: TextStyle(color: Colors.white70),
-                      enabledBorder: OutlineInputBorder(
-                        borderSide: BorderSide(color: Colors.white30),
-                      ),
-                    ),
-                    items: fundSources
-                        .map((src) => DropdownMenuItem(
-                              value: src,
-                              child: Text(src),
-                            ))
-                        .toList(),
-                    onChanged: (val) {
-                      if (val != null) {
-                        setModalState(() => selectedSourceOfFunds = val);
-                      }
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFFF05A5A),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      onPressed: () async {
-                        try {
-                          final store = storeController.text.trim().isEmpty
-                              ? 'Toko Tanpa Nama'
-                              : storeController.text.trim();
-                          final amount =
-                              double.tryParse(amountController.text.trim()) ?? 0;
-
-                          final appDir = await getApplicationDocumentsDirectory();
-                          final fileName = 'receipt_${DateTime.now().millisecondsSinceEpoch}${p.extension(imagePath)}';
-                          final savedImage = await File(imagePath).copy('${appDir.path}/$fileName');
-
-                          final newReceipt = ReceiptModel(
-                            storeName: store,
-                            category: selectedCategory,
-                            sourceOfFunds: selectedSourceOfFunds,
-                            date: DateTime.now(),
-                            totalAmount: amount,
-                            imagePath: savedImage.path, // Menggunakan path permanen
-                          );
-
-                          await DatabaseService.instance.insertReceipt(newReceipt);
-
-                          if (!ctx.mounted) return;
-                          Navigator.of(ctx).pop();
-                          setState(() => _selectedImage = null);
-                          _showError('Struk berhasil disimpan ke riwayat!');
-                        } catch (e) {
-                          if (!ctx.mounted) return;
-                          Navigator.of(ctx).pop();
-                          _showError('Gagal menyimpan: $e');
-                        }
-                      },
-                      child: const Text(
-                        'Simpan Struk',
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Detail Struk Belanja',
                         style: TextStyle(
                           color: Colors.white,
+                          fontSize: 18,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                    ),
+                      const SizedBox(height: 14),
+                      TextField(
+                        controller: storeController,
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Nama Toko',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white30),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Color(0xFFF05A5A)),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Produk, Jumlah & Harga (Rp)',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () {
+                              setModalState(() {
+                                itemRows.add({
+                                  'name': TextEditingController(),
+                                  'qty': TextEditingController(text: '1'),
+                                  'price': TextEditingController(),
+                                  'unitPrice': 0.0,
+                                });
+                              });
+                            },
+                            icon: const Icon(Icons.add,
+                                color: Color(0xFFF05A5A), size: 18),
+                            label: const Text(
+                              'Tambah',
+                              style: TextStyle(color: Color(0xFFF05A5A)),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      for (int i = 0; i < itemRows.length; i++) ...[
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Row(
+                            children: [
+                              // 1. Nama Produk
+                              Expanded(
+                                flex: 4,
+                                child: TextField(
+                                  controller: itemRows[i]['name']
+                                      as TextEditingController,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13),
+                                  decoration: InputDecoration(
+                                    labelText: 'Produk',
+                                    labelStyle: const TextStyle(
+                                        color: Colors.white54, fontSize: 12),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 10),
+                                    enabledBorder: const OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Colors.white30),
+                                    ),
+                                    focusedBorder: const OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Color(0xFFF05A5A)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              // 2. Jumlah (Qty) di samping nama produk
+                              SizedBox(
+                                width: 52,
+                                child: TextField(
+                                  controller: itemRows[i]['qty']
+                                      as TextEditingController,
+                                  keyboardType: TextInputType.number,
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13),
+                                  onChanged: (val) {
+                                    final newQty = int.tryParse(val) ?? 1;
+                                    final unitPrice =
+                                        (itemRows[i]['unitPrice'] as double);
+                                    if (unitPrice > 0 && newQty > 0) {
+                                      final newSubtotal = unitPrice * newQty;
+                                      (itemRows[i]['price']
+                                              as TextEditingController)
+                                          .text = newSubtotal.toStringAsFixed(0);
+                                    }
+                                    setModalState(() {});
+                                  },
+                                  decoration: const InputDecoration(
+                                    labelText: 'Qty',
+                                    labelStyle: TextStyle(
+                                        color: Colors.white54, fontSize: 12),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 6, vertical: 10),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Colors.white30),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Color(0xFFF05A5A)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              // 3. Subtotal Harga Produk (Rp)
+                              Expanded(
+                                flex: 3,
+                                child: TextField(
+                                  controller: itemRows[i]['price']
+                                      as TextEditingController,
+                                  keyboardType: TextInputType.number,
+                                  onChanged: (val) {
+                                    final enteredPrice = double.tryParse(
+                                            val.replaceAll(
+                                                RegExp(r'[^0-9]'), '')) ??
+                                        0;
+                                    final currentQty = int.tryParse(
+                                            (itemRows[i]['qty']
+                                                    as TextEditingController)
+                                                .text) ??
+                                        1;
+                                    itemRows[i]['unitPrice'] = currentQty > 0
+                                        ? enteredPrice / currentQty
+                                        : enteredPrice;
+                                    setModalState(() {});
+                                  },
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 13),
+                                  decoration: const InputDecoration(
+                                    labelText: 'Harga (Rp)',
+                                    labelStyle: TextStyle(
+                                        color: Colors.white54, fontSize: 12),
+                                    contentPadding: EdgeInsets.symmetric(
+                                        horizontal: 10, vertical: 10),
+                                    enabledBorder: OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Colors.white30),
+                                    ),
+                                    focusedBorder: OutlineInputBorder(
+                                      borderSide:
+                                          BorderSide(color: Color(0xFFF05A5A)),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              if (itemRows.length > 1)
+                                InkWell(
+                                  onTap: () {
+                                    setModalState(() => itemRows.removeAt(i));
+                                  },
+                                  child: const Padding(
+                                    padding: EdgeInsets.only(left: 4),
+                                    child: Icon(Icons.remove_circle_outline,
+                                        color: Colors.white54, size: 20),
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                      // Total otomatis dari jumlah seluruh harga item
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.white10,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total Otomatis',
+                              style: TextStyle(
+                                  color: Colors.white70, fontSize: 14),
+                            ),
+                            Text(
+                              formattedTotal,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedCategory,
+                        dropdownColor: const Color(0xFF262626),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Kategori',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white30),
+                          ),
+                        ),
+                        items: categories
+                            .map((cat) =>
+                                DropdownMenuItem(value: cat, child: Text(cat)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setModalState(() => selectedCategory = val);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        initialValue: selectedSourceOfFunds,
+                        dropdownColor: const Color(0xFF262626),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: const InputDecoration(
+                          labelText: 'Sumber Dana (Cash / E-Wallet / Bank)',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Colors.white30),
+                          ),
+                        ),
+                        items: fundSources
+                            .map((src) =>
+                                DropdownMenuItem(value: src, child: Text(src)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setModalState(() => selectedSourceOfFunds = val);
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 20),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 48,
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFFF05A5A),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          onPressed: () async {
+                            try {
+                              final store = storeController.text.trim().isEmpty
+                                  ? 'Toko Tanpa Nama'
+                                  : storeController.text.trim();
+
+                              // Gabungkan otomatis jika user menambahkan 2 baris dengan nama produk sama
+                              final Map<String, ReceiptItem> mergedItems = {};
+                              for (int i = 0; i < itemRows.length; i++) {
+                                final rawName =
+                                    (itemRows[i]['name'] as TextEditingController)
+                                        .text
+                                        .trim();
+                                final itemName = rawName.isEmpty
+                                    ? 'Produk ${i + 1}'
+                                    : rawName;
+                                final itemQty = int.tryParse((itemRows[i]['qty']
+                                            as TextEditingController)
+                                        .text
+                                        .trim()) ??
+                                    1;
+                                final itemPrice = double.tryParse(
+                                        (itemRows[i]['price']
+                                                as TextEditingController)
+                                            .text
+                                            .replaceAll(
+                                                RegExp(r'[^0-9]'), '')) ??
+                                    0;
+
+                                final key = itemName.toLowerCase();
+                                if (mergedItems.containsKey(key)) {
+                                  final existing = mergedItems[key]!;
+                                  mergedItems[key] = ReceiptItem(
+                                    name: existing.name,
+                                    quantity: existing.quantity + itemQty,
+                                    price: existing.price + itemPrice,
+                                  );
+                                } else {
+                                  mergedItems[key] = ReceiptItem(
+                                    name: itemName,
+                                    quantity: itemQty > 0 ? itemQty : 1,
+                                    price: itemPrice,
+                                  );
+                                }
+                              }
+
+                              final finalItems = mergedItems.values.toList();
+                              final finalTotal = finalItems.fold<double>(
+                                  0, (sum, item) => sum + item.price);
+
+                              final appDir =
+                                  await getApplicationDocumentsDirectory();
+                              final fileName =
+                                  'receipt_${DateTime.now().millisecondsSinceEpoch}${p.extension(imagePath)}';
+                              final savedImage = await File(imagePath)
+                                  .copy('${appDir.path}/$fileName');
+
+                              final newReceipt = ReceiptModel(
+                                storeName: store,
+                                category: selectedCategory,
+                                sourceOfFunds: selectedSourceOfFunds,
+                                date: DateTime.now(),
+                                totalAmount: finalTotal,
+                                imagePath: savedImage.path,
+                                items: finalItems,
+                              );
+
+                              await DatabaseService.instance
+                                  .insertReceipt(newReceipt);
+
+                              if (!ctx.mounted) return;
+                              Navigator.of(ctx).pop();
+                              setState(() => _selectedImage = null);
+                              _showError('Struk berhasil disimpan ke riwayat!');
+                            } catch (e) {
+                              if (!ctx.mounted) return;
+                              Navigator.of(ctx).pop();
+                              _showError('Gagal menyimpan: $e');
+                            }
+                          },
+                          child: const Text(
+                            'Simpan Struk',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
+                ),
               ),
             );
           },
