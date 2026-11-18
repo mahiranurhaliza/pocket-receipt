@@ -531,7 +531,6 @@ class _TabButton extends StatelessWidget {
 
 class _PortfolioContent extends StatelessWidget {
   const _PortfolioContent({
-    super.key,
     required this.items,
     this.onSeeAll,
   });

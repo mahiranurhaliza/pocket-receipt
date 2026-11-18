@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 class ReceiptItem {
   final String name;
   final int quantity;
@@ -27,48 +25,46 @@ class ReceiptItem {
 class ReceiptModel {
   final int? id;
   final String storeName;
-  final String category; // Contoh: Makanan, Transportasi, Belanja, Tagihan
   final DateTime date;
   final double totalAmount;
+  final String category;
+  final String sourceOfFunds;
   final String? imagePath;
   final List<ReceiptItem> items;
 
   ReceiptModel({
     this.id,
     required this.storeName,
-    required this.category,
     required this.date,
     required this.totalAmount,
+    required this.category,
+    this.sourceOfFunds = 'Cash',
     this.imagePath,
     this.items = const [],
   });
 
-  // Mengubah objek ke format Map untuk disimpan ke SQLite
   Map<String, dynamic> toMap() {
     return {
       'id': id,
-      'storeName': storeName,
-      'category': category,
+      'store_name': storeName,
       'date': date.toIso8601String(),
-      'totalAmount': totalAmount,
-      'imagePath': imagePath,
-      'items': jsonEncode(items.map((e) => e.toMap()).toList()),
+      'total_amount': totalAmount,
+      'category': category,
+      'source_of_funds': sourceOfFunds,
+      'image_path': imagePath,
     };
   }
 
-  // Mengubah data dari SQLite kembali menjadi objek ReceiptModel
-  factory ReceiptModel.fromMap(Map<String, dynamic> map) {
-    final List<dynamic> decodedItems =
-        map['items'] != null ? jsonDecode(map['items']) : [];
-
+  factory ReceiptModel.fromMap(Map<String, dynamic> map, {List<ReceiptItem> items = const []}) {
     return ReceiptModel(
       id: map['id'],
-      storeName: map['storeName'] ?? 'Tanpa Nama',
-      category: map['category'] ?? 'Lainnya',
+      storeName: map['store_name'],
       date: DateTime.parse(map['date']),
-      totalAmount: (map['totalAmount'] ?? 0).toDouble(),
-      imagePath: map['imagePath'],
-      items: decodedItems.map((e) => ReceiptItem.fromMap(e)).toList(),
+      totalAmount: (map['total_amount'] as num).toDouble(),
+      category: map['category'] ?? 'Belanja',
+      sourceOfFunds: map['source_of_funds'] ?? 'Cash',
+      imagePath: map['image_path'],
+      items: items,
     );
   }
 }

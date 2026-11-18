@@ -1,26 +1,18 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-
 import 'history.dart';
 import 'portfolio.dart';
 import 'scan.dart';
 import 'statistic.dart';
 
-// void main() {
-//   runApp(
-//     const MaterialApp(
-//       debugShowCheckedModeBanner: false,
-//       home: HomeScreen(),
-//     ),
-//   );
-// }
+import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
-class HomeScreen extends StatelessWidget {
+import 'package:intl/intl.dart';
+import 'services/database_service.dart';
+
+class HomeScreen extends StatefulWidget {
   const HomeScreen({
     super.key,
     this.userName = 'You',
-    this.period = '1 Sep-30 Sep 2026',
-    this.expenses = 'Rp1.000.000',
     this.onProfile,
     this.onPortfolio,
     this.onStatistic,
@@ -29,13 +21,49 @@ class HomeScreen extends StatelessWidget {
   });
 
   final String userName;
-  final String period;
-  final String expenses;
   final VoidCallback? onProfile;
   final VoidCallback? onPortfolio;
   final VoidCallback? onStatistic;
   final VoidCallback? onHistory;
   final VoidCallback? onScan;
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String _totalExpenses = 'Rp0';
+  String _currentPeriod = '';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDashboardData();
+  }
+
+  Future<void> _loadDashboardData() async {
+    final now = DateTime.now();
+    final lastDay = DateTime(now.year, now.month + 1, 0).day;
+    final monthStr = DateFormat('MMM').format(now);
+    final periodStr = '1 $monthStr-$lastDay $monthStr ${now.year}';
+
+    final receipts = await DatabaseService.instance.getAllReceipts();
+    final monthlyTotal = receipts
+        .where((r) => r.date.month == now.month && r.date.year == now.year)
+        .fold<double>(0, (sum, item) => sum + item.totalAmount);
+
+    final formattedTotal = NumberFormat.currency(
+      locale: 'id_ID',
+      symbol: 'Rp',
+      decimalDigits: 0,
+    ).format(monthlyTotal);
+
+    if (!mounted) return;
+    setState(() {
+      _currentPeriod = periodStr;
+      _totalExpenses = formattedTotal;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -145,8 +173,8 @@ class HomeScreen extends StatelessWidget {
                     left: contentLeft,
                     width: contentWidth,
                     child: _ProfileCard(
-                      userName: userName,
-                      onPressed: onProfile,
+                      userName: widget.userName,
+                      onPressed: widget.onProfile,
                     ),
                   ),
                   Positioned(
@@ -154,8 +182,8 @@ class HomeScreen extends StatelessWidget {
                     left: contentLeft,
                     width: contentWidth,
                     child: _InsightsCard(
-                      period: period,
-                      expenses: expenses,
+                      period: _currentPeriod,
+                      expenses: _totalExpenses,
                     ),
                   ),
                   Positioned(
@@ -168,7 +196,7 @@ class HomeScreen extends StatelessWidget {
                       assetWidth: 100,
                       assetHeight: 100,
                       gradientColor: const Color(0xFFFFF185),
-                      onPressed: onPortfolio ??
+                      onPressed: widget.onPortfolio ??
                           () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
@@ -188,7 +216,7 @@ class HomeScreen extends StatelessWidget {
                       assetWidth: 100,
                       assetHeight: 100,
                       gradientColor: const Color(0xFFFFB870),
-                      onPressed: onStatistic ??
+                      onPressed: widget.onStatistic ??
                           () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
@@ -203,13 +231,13 @@ class HomeScreen extends StatelessWidget {
                     left: contentLeft,
                     width: contentWidth,
                     child: _HistoryCard(
-                      onPressed: onHistory ??
+                      onPressed: widget.onHistory ??
                           () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
                                 builder: (_) => const HistoryScreen(),
                               ),
-                            );
+                            ).then((_) => _loadDashboardData());
                           },
                     ),
                   ),
@@ -217,13 +245,13 @@ class HomeScreen extends StatelessWidget {
                     top: pageHeight - 135,
                     left: (constraints.maxWidth - 80) / 2,
                     child: _ScanButton(
-                      onPressed: onScan ??
+                      onPressed: widget.onScan ??
                            () {
                              Navigator.of(context).push(
                                MaterialPageRoute<void>(
                                  builder: (_) => const ScanScreen(),
                                ),
-                             );
+                             ).then((_) => _loadDashboardData());
                            },
                     ),
                   ),

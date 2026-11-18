@@ -1,18 +1,13 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'services/database_service.dart';
 
-void main() {
-  runApp(
-    const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: HistoryDetailedScreen(),
-    ),
-  );
-}
-
-class HistoryDetailedScreen extends StatelessWidget {
+class HistoryDetailedScreen extends StatefulWidget {
   const HistoryDetailedScreen({
     super.key,
+    this.receiptId,
     this.merchant = 'Alfamart',
     this.dateTime = '20 Oct 2026 11:46:18 WIB',
     this.products = const [
@@ -20,11 +15,12 @@ class HistoryDetailedScreen extends StatelessWidget {
       HistoryProduct(name: 'Ice Cream', price: 'Rp8.000'),
     ],
     this.total = 'Rp13.000',
-    this.sourceOfFunds = 'Gopay',
+    this.sourceOfFunds = 'Cash',
     this.category = 'Food & Beverages',
     this.receiptAsset,
   });
 
+  final int? receiptId;
   final String merchant;
   final String dateTime;
   final List<HistoryProduct> products;
@@ -32,6 +28,213 @@ class HistoryDetailedScreen extends StatelessWidget {
   final String sourceOfFunds;
   final String category;
   final String? receiptAsset;
+
+  @override
+  State<HistoryDetailedScreen> createState() => _HistoryDetailedScreenState();
+}
+
+class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
+  late String _currentSourceOfFunds;
+
+  static const List<String> _fundSources = [
+    'Cash',
+    'GoPay',
+    'OVO',
+    'DANA',
+    'ShopeePay',
+    'BCA',
+    'BNI',
+    'Mandiri',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _currentSourceOfFunds = widget.sourceOfFunds;
+  }
+
+  void _openFullScreenImage() {
+    final path = widget.receiptAsset;
+    if (path == null || path.isEmpty) return;
+
+    final file = File(path);
+    final isLocalFile = file.existsSync();
+
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => Scaffold(
+          backgroundColor: Colors.black,
+          appBar: AppBar(
+            backgroundColor: Colors.black,
+            iconTheme: const IconThemeData(color: Colors.white),
+            title: Text(
+              widget.merchant,
+              style: const TextStyle(
+                color: Colors.white,
+                fontFamily: 'Bricolage Grotesque',
+                fontSize: 18,
+              ),
+            ),
+          ),
+          body: Center(
+            child: InteractiveViewer(
+              minScale: 0.5,
+              maxScale: 4.0,
+              child: isLocalFile
+                  ? Image.file(file, fit: BoxFit.contain)
+                  : Image.asset(path, fit: BoxFit.contain),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showEditSourceDialog() async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFFF8F8F8),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Pilih Sumber Dana (Source of funds)',
+                  style: TextStyle(
+                    color: Color(0xFF1E1E1E),
+                    fontFamily: 'Bricolage Grotesque',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _fundSources.map((source) {
+                    final isSelected = source == _currentSourceOfFunds;
+                    return ChoiceChip(
+                      label: Text(
+                        source,
+                        style: TextStyle(
+                          fontFamily: 'Bricolage Grotesque',
+                          color: isSelected
+                              ? Colors.white
+                              : const Color(0xFF1E1E1E),
+                          fontWeight:
+                              isSelected ? FontWeight.w600 : FontWeight.w400,
+                        ),
+                      ),
+                      selected: isSelected,
+                      selectedColor: const Color(0xFFF05A5A),
+                      backgroundColor: Colors.white,
+                      onSelected: (_) => Navigator.of(ctx).pop(source),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (selected != null && selected != _currentSourceOfFunds) {
+      if (widget.receiptId != null) {
+        await DatabaseService.instance.updateReceiptSourceOfFunds(
+          widget.receiptId!,
+          selected,
+        );
+      }
+      if (!mounted) return;
+      setState(() => _currentSourceOfFunds = selected);
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(content: Text('Sumber dana diubah menjadi $selected')),
+        );
+    }
+  }
+
+  Widget _buildReceiptPreview() {
+    final path = widget.receiptAsset;
+    if (path == null || path.isEmpty) {
+      return const Center(
+        child: Text(
+          'Tidak ada foto struk',
+          style: TextStyle(
+            color: Color(0xFF888888),
+            fontFamily: 'Bricolage Grotesque',
+            fontSize: 14,
+          ),
+        ),
+      );
+    }
+
+    final file = File(path);
+    final imageWidget = file.existsSync()
+        ? Image.file(file, fit: BoxFit.cover, width: double.infinity, height: double.infinity)
+        : Image.asset(
+            path,
+            fit: BoxFit.cover,
+            width: double.infinity,
+            height: double.infinity,
+            errorBuilder: (_, __, ___) => const Center(
+              child: Text(
+                'Gambar struk tidak ditemukan',
+                style: TextStyle(
+                  color: Color(0xFF888888),
+                  fontFamily: 'Bricolage Grotesque',
+                  fontSize: 14,
+                ),
+              ),
+            ),
+          );
+
+    return GestureDetector(
+      onTap: _openFullScreenImage,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          imageWidget,
+          Positioned(
+            right: 10,
+            bottom: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.zoom_in, color: Colors.white, size: 16),
+                  SizedBox(width: 4),
+                  Text(
+                    'Perbesar',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontFamily: 'Bricolage Grotesque',
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,13 +249,14 @@ class HistoryDetailedScreen extends StatelessWidget {
           final pageHeight =
               constraints.maxHeight < 900 ? 900.0 : constraints.maxHeight;
 
-          return SizedBox(
-            width: constraints.maxWidth,
-            height: pageHeight,
-            child: Stack(
-              clipBehavior: Clip.hardEdge,
-              children: [
-                Positioned(
+          return SingleChildScrollView(
+            child: SizedBox(
+              width: constraints.maxWidth,
+              height: pageHeight,
+              child: Stack(
+                clipBehavior: Clip.hardEdge,
+                children: [
+                  Positioned(
                     left: constraints.maxWidth * 0.45,
                     top: -34,
                     child: Container(
@@ -72,7 +276,6 @@ class HistoryDetailedScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Gradien Oranye
                   Positioned(
                     left: constraints.maxWidth * 0.05,
                     top: -9,
@@ -93,7 +296,6 @@ class HistoryDetailedScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Gradien Ungu
                   Positioned(
                     left: -constraints.maxWidth * 0.2,
                     top: -63,
@@ -114,114 +316,108 @@ class HistoryDetailedScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  
                   Positioned(
                     width: constraints.maxWidth,
                     height: pageHeight,
                     child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0x55F8F8F8), 
+                      decoration: const BoxDecoration(
+                        color: Color(0x55F8F8F8),
                       ),
                     ),
                   ),
-
-                Positioned(
-                  top: -63,
-                  left: (constraints.maxWidth - 578) / 2,
-                  child: SvgPicture.asset(
-                    'assets/58487.svg',
-                    width: 578,
-                    height: 963,
-                    fit: BoxFit.fill,
-                  ),
-                ),
-                Positioned(
-                  top: 40,
-                  left: contentLeft,
-                  child: SizedBox(
-                    width: 22,
-                    height: 40,
-                    child: InkWell(
-                      onTap: () => Navigator.of(context).maybePop(),
-                      child: Center(
-                        child: SvgPicture.asset(
-                          'assets/icons/back.svg',
-                          width: 22,
-                          height: 17,
+                  Positioned(
+                    top: 40,
+                    left: contentLeft,
+                    child: SizedBox(
+                      width: 22,
+                      height: 40,
+                      child: InkWell(
+                        onTap: () => Navigator.of(context).maybePop(),
+                        child: Center(
+                          child: SvgPicture.asset(
+                            'assets/icons/back.svg',
+                            width: 22,
+                            height: 17,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                Positioned(
-                  top: 90,
-                  left: contentLeft,
-                  width: contentWidth,
-                  child: Text(
-                    merchant,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.black,
-                      fontFamily: 'Bricolage Grotesque',
-                      fontSize: 25,
-                      fontWeight: FontWeight.w600,
-                      height: 0.8,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 120,
-                  left: (constraints.maxWidth - receiptWidth) / 2,
-                  width: receiptWidth,
-                  height: 200,
-                  child: Container(
-                    clipBehavior: Clip.antiAlias,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF8F8F8),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: receiptAsset == null
-                        ? null
-                        : Image.asset(receiptAsset!, fit: BoxFit.cover),
-                  ),
-                ),
-                Positioned(
-                  top: 325,
-                  left: contentLeft,
-                  width: contentWidth,
-                  child: Text(
-                    dateTime,
-                    textAlign: TextAlign.center,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFF1E1E1E),
-                      fontFamily: 'Bricolage Grotesque',
-                      fontSize: 15,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  top: 368,
-                  left: contentLeft,
-                  width: contentWidth,
-                  child: Column(
-                    children: [
-                      _ProductsSection(products: products, total: total),
-                      const SizedBox(height: 10),
-                      _DetailSection(
-                        title: 'Source of funds',
-                        value: sourceOfFunds,
+                  Positioned(
+                    top: 90,
+                    left: contentLeft,
+                    width: contentWidth,
+                    child: Text(
+                      widget.merchant,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.black,
+                        fontFamily: 'Bricolage Grotesque',
+                        fontSize: 25,
+                        fontWeight: FontWeight.w600,
+                        height: 0.8,
                       ),
-                      const SizedBox(height: 10),
-                      _DetailSection(title: 'Category', value: category),
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                  Positioned(
+                    top: 120,
+                    left: (constraints.maxWidth - receiptWidth) / 2,
+                    width: receiptWidth,
+                    height: 200,
+                    child: Container(
+                      clipBehavior: Clip.antiAlias,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF8F8F8),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: _buildReceiptPreview(),
+                    ),
+                  ),
+                  Positioned(
+                    top: 325,
+                    left: contentLeft,
+                    width: contentWidth,
+                    child: Text(
+                      widget.dateTime,
+                      textAlign: TextAlign.center,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Color(0xFF1E1E1E),
+                        fontFamily: 'Bricolage Grotesque',
+                        fontSize: 15,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: 368,
+                    left: contentLeft,
+                    width: contentWidth,
+                    child: Column(
+                      children: [
+                        _ProductsSection(
+                          products: widget.products,
+                          total: widget.total,
+                        ),
+                        const SizedBox(height: 10),
+                        _DetailSection(
+                          title: 'Source of funds',
+                          value: _currentSourceOfFunds,
+                          onEdit: _showEditSourceDialog,
+                        ),
+                        const SizedBox(height: 10),
+                        _DetailSection(
+                          title: 'Category',
+                          value: widget.category,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -312,10 +508,15 @@ class _ProductsSection extends StatelessWidget {
 }
 
 class _DetailSection extends StatelessWidget {
-  const _DetailSection({required this.title, required this.value});
+  const _DetailSection({
+    required this.title,
+    required this.value,
+    this.onEdit,
+  });
 
   final String title;
   final String value;
+  final VoidCallback? onEdit;
 
   @override
   Widget build(BuildContext context) {
@@ -324,17 +525,40 @@ class _DetailSection extends StatelessWidget {
       child: Column(
         children: [
           _SectionHeader(title: title),
-          SizedBox(
-            height: 30,
-            child: Align(
-              alignment: Alignment.centerLeft,
+          InkWell(
+            onTap: onEdit,
+            child: SizedBox(
+              height: 30,
               child: Padding(
-                padding: const EdgeInsets.only(left: 5),
-                child: Text(
-                  value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: _regularStyle,
+                padding: const EdgeInsets.symmetric(horizontal: 5),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        value,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: _regularStyle,
+                      ),
+                    ),
+                    if (onEdit != null)
+                      const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.edit, size: 15, color: Color(0xFFF05A5A)),
+                          SizedBox(width: 4),
+                          Text(
+                            'Edit',
+                            style: TextStyle(
+                              color: Color(0xFFF05A5A),
+                              fontFamily: 'Bricolage Grotesque',
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                  ],
                 ),
               ),
             ),
