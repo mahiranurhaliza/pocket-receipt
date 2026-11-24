@@ -3,17 +3,17 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'history.dart';
 import 'portfolio.dart';
-//import 'scan.dart';
+import 'scan.dart';
 import 'statistic.dart';
 
-// void main() {
-//   runApp(
-//     const MaterialApp(
-//       debugShowCheckedModeBanner: false,
-//       home: HomeScreen(),
-//     ),
-//   );
-// }
+void main() {
+  runApp(
+    const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: HomeScreen(),
+    ),
+  );
+}
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({
@@ -217,14 +217,14 @@ class HomeScreen extends StatelessWidget {
                     top: pageHeight - 135,
                     left: (constraints.maxWidth - 80) / 2,
                     child: _ScanButton(
-                      // onPressed: onScan ??
-                      //     () {
-                      //       Navigator.of(context).push(
-                      //         MaterialPageRoute<void>(
-                      //           builder: (_) => const ScanScreen(),
-                      //         ),
-                      //      );
-                      //    },
+                      onPressed: onScan ??
+                          () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const ScanScreen(),
+                              ),
+                           );
+                         },
                     ),
                   ),
                 ],
