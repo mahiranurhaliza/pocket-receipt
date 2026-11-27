@@ -11,13 +11,90 @@ import 'barchart.dart';
 //   );
 // }
 
-class StatisticScreen extends StatelessWidget {
-  const StatisticScreen({super.key});
+class StatisticDayItem {
+  const StatisticDayItem({
+    required this.dateLabel,
+    required this.transactions,
+  });
 
-  static const _transactions = [
-    _Transaction('BNI', Color(0xFFC7E212)),
-    _Transaction('Gopay', Color(0xFF00AED6)),
-    _Transaction('Shopeepay', Color(0xFFFF6135)),
+  final String dateLabel;
+  final List<StatisticTransactionItem> transactions;
+}
+
+class StatisticTransactionItem {
+  const StatisticTransactionItem({
+    required this.merchant,
+    required this.amountText,
+    required this.source,
+    required this.color,
+  });
+
+  final String merchant;
+  final String amountText;
+  final String source;
+  final Color color;
+}
+
+class StatisticScreen extends StatelessWidget {
+  const StatisticScreen({
+    super.key,
+    this.title = 'This week expense',
+    this.totalExpense = 'Rp231.000',
+    this.maxValue = 440000,
+    this.weeklyItems = _defaultWeeklyData,
+    this.dayCards = _defaultDayCards,
+  });
+
+  final String title;
+  final String totalExpense;
+  final double maxValue;
+  final List<BarChartDataData> weeklyItems;
+  final List<StatisticDayItem> dayCards;
+
+  static const List<BarChartDataData> _defaultWeeklyData = [
+    BarChartDataData(label: '14-20', value: 165000, isThisMonth: false),
+    BarChartDataData(label: '21-27', value: 220000, isThisMonth: false),
+    BarChartDataData(label: '28-4', value: 330000, isThisMonth: true),
+    BarChartDataData(label: '5-11', value: 150000, isThisMonth: true),
+    BarChartDataData(label: '12-18', value: 375000, isThisMonth: true),
+    BarChartDataData(
+      label: '19-25',
+      value: 300000,
+      isThisMonth: true,
+      isSelected: true,
+    ),
+  ];
+
+  static const List<StatisticTransactionItem> _defaultTransactions = [
+    StatisticTransactionItem(
+      merchant: 'KANTIN GEDUNG BIRU\nPPBS',
+      amountText: 'Rp9.972.000',
+      source: 'BNI',
+      color: Color(0xFFC7E212),
+    ),
+    StatisticTransactionItem(
+      merchant: 'KANTIN GEDUNG BIRU\nPPBS',
+      amountText: 'Rp9.972.000',
+      source: 'Gopay',
+      color: Color(0xFF00AED6),
+    ),
+    StatisticTransactionItem(
+      merchant: 'KANTIN GEDUNG BIRU\nPPBS',
+      amountText: 'Rp9.972.000',
+      source: 'Shopeepay',
+      color: Color(0xFFFF6135),
+    ),
+  ];
+
+  static const List<StatisticDayItem> _defaultDayCards = [
+    StatisticDayItem(
+      dateLabel: 'Tuesday, 20 Oct 2026',
+      transactions: _defaultTransactions,
+    ),
+    StatisticDayItem(
+      dateLabel: 'Tuesday, 20 Oct 2026',
+      transactions: _defaultTransactions,
+    ),
   ];
 
   @override
@@ -39,7 +116,7 @@ class StatisticScreen extends StatelessWidget {
               child: Stack(
                 clipBehavior: Clip.hardEdge,
                 children: [
-                  // Gradien Kuning[cite: 3]
+                  // Gradien Kuning
                   Positioned(
                     left: constraints.maxWidth * 0.45,
                     top: -34,
@@ -60,7 +137,7 @@ class StatisticScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Gradien Oranye[cite: 3]
+                  // Gradien Oranye
                   Positioned(
                     left: constraints.maxWidth * 0.05,
                     top: -9,
@@ -81,7 +158,7 @@ class StatisticScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Gradien Ungu[cite: 3]
+                  // Gradien Ungu
                   Positioned(
                     left: -constraints.maxWidth * 0.2,
                     top: -63,
@@ -108,7 +185,7 @@ class StatisticScreen extends StatelessWidget {
                     height: pageHeight,
                     child: Container(
                       decoration: const BoxDecoration(
-                        color: Color(0x55F8F8F8), 
+                        color: Color(0x55F8F8F8),
                       ),
                     ),
                   ),
@@ -127,7 +204,12 @@ class StatisticScreen extends StatelessWidget {
                   // --- KONTEN UTAMA DISUSUN MENGGUNAKAN COLUMN AGAR RESPONSIF ---
                   Positioned.fill(
                     child: SingleChildScrollView(
-                      padding: EdgeInsets.fromLTRB(contentLeft, 40, contentLeft, 40),
+                      padding: EdgeInsets.fromLTRB(
+                        contentLeft,
+                        40,
+                        contentLeft,
+                        40,
+                      ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
@@ -135,23 +217,16 @@ class StatisticScreen extends StatelessWidget {
                             onBack: () => Navigator.of(context).maybePop(),
                           ),
                           const SizedBox(height: 10),
-                          
-                          // Kotak Expense (ResponsiveBarChart)[cite: 3]
-                          const _StatisticCard(),
-                          
-                          const SizedBox(height: 25), // Jarak fleksibel dan seragam
-                          
-                          // Kotak Tanggal Pertama[cite: 3]
-                          const _DayCard(
-                            transactions: _transactions,
+                          ResponsiveBarChart(
+                            items: weeklyItems,
+                            title: title,
+                            totalExpense: totalExpense,
+                            maxValue: maxValue,
                           ),
-                          
-                          const SizedBox(height: 25), // Jarak fleksibel dan seragam
-                          
-                          // Kotak Tanggal Kedua[cite: 3]
-                          const _DayCard(
-                            transactions: _transactions,
-                          ),
+                          for (final day in dayCards) ...[
+                            const SizedBox(height: 25),
+                            _DayCard(day: day),
+                          ],
                         ],
                       ),
                     ),
@@ -207,54 +282,33 @@ class _Header extends StatelessWidget {
   }
 }
 
-// Widget Pembungkus yang Menggunakan ResponsiveBarChart[cite: 3]
-class _StatisticCard extends StatelessWidget {
-  const _StatisticCard();
-
-  static const List<BarChartDataData> _weeklyData = [
-    BarChartDataData(label: '14-20', value: 165000, isThisMonth: false),
-    BarChartDataData(label: '21-27', value: 220000, isThisMonth: false),
-    BarChartDataData(label: '28-4',  value: 330000, isThisMonth: true),
-    BarChartDataData(label: '5-11',  value: 150000, isThisMonth: true),
-    BarChartDataData(label: '12-18', value: 375000, isThisMonth: true),
-    BarChartDataData(label: '19-25', value: 300000, isThisMonth: true, isSelected: true),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    return const ResponsiveBarChart(
-      items: _weeklyData,
-      title: 'This week expense',
-      totalExpense: 'Rp231.000',
-      maxValue: 440000,
-    );
-  }
-}
-
 class _DayCard extends StatelessWidget {
-  const _DayCard({required this.transactions});
+  const _DayCard({required this.day});
 
-  final List<_Transaction> transactions;
+  final StatisticDayItem day;
 
   @override
   Widget build(BuildContext context) {
+    final rowCount = day.transactions.isEmpty ? 1 : day.transactions.length;
+    final cardHeight = 41.0 + (rowCount * 69.6666666667);
+
     return Container(
-      height: 250,
+      height: cardHeight,
       decoration: BoxDecoration(
         color: const Color(0xFFF8F8F8),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
         children: [
-          const SizedBox(
+          SizedBox(
             height: 40,
             child: Align(
               alignment: Alignment.centerLeft,
               child: Padding(
-                padding: EdgeInsets.only(left: 10),
+                padding: const EdgeInsets.only(left: 10),
                 child: Text(
-                  'Tuesday, 20 Oct 2026',
-                  style: TextStyle(
+                  day.dateLabel,
+                  style: const TextStyle(
                     color: Color(0xFF1E1E1E),
                     fontFamily: 'Bricolage Grotesque',
                     fontSize: 15,
@@ -270,13 +324,29 @@ class _DayCard extends StatelessWidget {
             height: 1,
             fit: BoxFit.fill,
           ),
-          for (var index = 0; index < transactions.length; index++)
-            _TransactionRow(
-              transaction: transactions[index],
-              showDivider: index != transactions.length - 1,
-              dividerAsset:
-                  index == 0 ? 'assets/e2b93.svg' : 'assets/8947c.svg',
-            ),
+          if (day.transactions.isEmpty)
+            const SizedBox(
+              height: 69.6666666667,
+              child: Center(
+                child: Text(
+                  'No transactions',
+                  style: TextStyle(
+                    color: Color(0xFF1E1E1E),
+                    fontFamily: 'Bricolage Grotesque',
+                    fontSize: 15,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ),
+            )
+          else
+            for (var index = 0; index < day.transactions.length; index++)
+              _TransactionRow(
+                transaction: day.transactions[index],
+                showDivider: index != day.transactions.length - 1,
+                dividerAsset:
+                    index == 0 ? 'assets/e2b93.svg' : 'assets/8947c.svg',
+              ),
         ],
       ),
     );
@@ -290,7 +360,7 @@ class _TransactionRow extends StatelessWidget {
     required this.dividerAsset,
   });
 
-  final _Transaction transaction;
+  final StatisticTransactionItem transaction;
   final bool showDivider;
   final String dividerAsset;
 
@@ -309,13 +379,15 @@ class _TransactionRow extends StatelessWidget {
               height: 43.205,
             ),
           ),
-          const Positioned(
+          Positioned(
             left: 60,
             top: 14,
             width: 180,
             child: Text(
-              'KANTIN GEDUNG BIRU\nPPBS',
-              style: TextStyle(
+              transaction.merchant,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
                 color: Color(0xFF1E1E1E),
                 fontFamily: 'Bricolage Grotesque',
                 fontSize: 15,
@@ -331,10 +403,10 @@ class _TransactionRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                const Text(
-                  'Rp9.972.000',
+                Text(
+                  transaction.amountText,
                   maxLines: 1,
-                  style: TextStyle(
+                  style: const TextStyle(
                     color: Color(0xFF1E1E1E),
                     fontFamily: 'Bricolage Grotesque',
                     fontSize: 15,
@@ -382,11 +454,4 @@ class _TransactionRow extends StatelessWidget {
       ),
     );
   }
-}
-
-class _Transaction {
-  const _Transaction(this.source, this.color);
-
-  final String source;
-  final Color color;
 }

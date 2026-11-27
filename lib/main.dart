@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 
-import 'UI/home.dart';
+import 'database/database_service.dart';
 import 'fitur_history/history_feature_page.dart';
+import 'backend/fitur_portfolio.dart';
 import 'fitur_scan/scan_feature_page.dart';
+import 'backend/fitur_statistic.dart';
+import 'UI/home.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await DatabaseService.instance.database;
   runApp(const PocketReceiptApp());
 }
 
@@ -33,6 +37,20 @@ class PocketReceiptApp extends StatelessWidget {
             Navigator.of(context).push(
               MaterialPageRoute<void>(
                 builder: (_) => const ScanFeaturePage(),
+              ),
+            );
+          },
+          onPortfolio: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const FiturPortfolio(),
+              ),
+            );
+          },
+          onStatistic: () {
+            Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const FiturStatistic(),
               ),
             );
           },

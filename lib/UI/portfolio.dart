@@ -11,11 +11,29 @@ import 'piechart.dart';
 //   );
 // }
 
+class PortfolioDisplayItem {
+  const PortfolioDisplayItem({
+    required this.name,
+    required this.amount,
+    required this.numericValue,
+    required this.transactions,
+    required this.color,
+  });
+
+  final String name;
+  final String amount;
+  final double numericValue;
+  final String transactions;
+  final Color color;
+}
+
 class PortfolioScreen extends StatefulWidget {
   const PortfolioScreen({
     super.key,
     this.period = '1 Sep-30 Sep 2026',
     this.expenses = 'Rp1.000.000',
+    this.categories = _defaultCategoryItems,
+    this.pockets = _defaultPocketItems,
     this.onPreviousPeriod,
     this.onNextPeriod,
     this.onSeeAll,
@@ -23,49 +41,42 @@ class PortfolioScreen extends StatefulWidget {
 
   final String period;
   final String expenses;
+  final List<PortfolioDisplayItem> categories;
+  final List<PortfolioDisplayItem> pockets;
   final VoidCallback? onPreviousPeriod;
   final VoidCallback? onNextPeriod;
   final ValueChanged<String>? onSeeAll;
 
-  @override
-  State<PortfolioScreen> createState() => _PortfolioScreenState();
-}
-
-class _PortfolioScreenState extends State<PortfolioScreen> {
-  final _pageController = PageController();
-  int _selectedIndex = 0;
-
-  // Sampel Data Kategori (Warna & Proporsi Nilai Mengikuti referensi)
-  static const _categoryItems = [
-    _PortfolioItem(
+  static const _defaultCategoryItems = [
+    PortfolioDisplayItem(
       name: 'BNI',
       amount: 'Rp575.000',
       numericValue: 575000,
       transactions: 'From 23 transactions',
       color: Color(0xFFC7E212),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'OVO',
       amount: 'Rp120.000',
       numericValue: 120000,
       transactions: 'From 9 transactions',
       color: Color(0xFF793ECC),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Cash',
       amount: 'Rp78.000',
       numericValue: 78000,
       transactions: 'From 3 transactions',
       color: Color(0xFF5C5C5C),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Gopay',
       amount: 'Rp172.000',
       numericValue: 172000,
       transactions: 'From 4 transactions',
       color: Color(0xFF00AED6),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Shopeepay',
       amount: 'Rp55.000',
       numericValue: 55000,
@@ -74,36 +85,36 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
     ),
   ];
 
-  static const _pocketItems = [
-    _PortfolioItem(
+  static const _defaultPocketItems = [
+    PortfolioDisplayItem(
       name: 'Bills',
       amount: 'Rp575.000',
       numericValue: 575000,
       transactions: 'From 23 transactions',
       color: Color(0xFFFFED7E),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Top-ups',
       amount: 'Rp78.000',
       numericValue: 78000,
       transactions: 'From 3 transactions',
       color: Color(0xFFD2BFEE),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Food & Beverages',
       amount: 'Rp172.000',
       numericValue: 172000,
       transactions: 'From 4 transactions',
       color: Color(0xFFFF9FC6),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Transportation',
       amount: 'Rp55.000',
       numericValue: 55000,
       transactions: 'From 2 transactions',
       color: Color(0xFFFFB870),
     ),
-    _PortfolioItem(
+    PortfolioDisplayItem(
       name: 'Shopping',
       amount: 'Rp120.000',
       numericValue: 120000,
@@ -111,6 +122,14 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
       color: Color(0xFF70E5F2),
     ),
   ];
+
+  @override
+  State<PortfolioScreen> createState() => _PortfolioScreenState();
+}
+
+class _PortfolioScreenState extends State<PortfolioScreen> {
+  final _pageController = PageController();
+  int _selectedIndex = 0;
 
   void _selectTab(int index) {
     if (index == _selectedIndex) return;
@@ -219,8 +238,8 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                     width: constraints.maxWidth,
                     height: pageHeight,
                     child: Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0x55F8F8F8), 
+                      decoration: const BoxDecoration(
+                        color: Color(0x55F8F8F8),
                       ),
                     ),
                   ),
@@ -268,11 +287,11 @@ class _PortfolioScreenState extends State<PortfolioScreen> {
                         },
                         children: [
                           _PortfolioContent(
-                            items: _categoryItems,
+                            items: widget.categories,
                             onSeeAll: widget.onSeeAll,
                           ),
                           _PortfolioContent(
-                            items: _pocketItems,
+                            items: widget.pockets,
                             onSeeAll: widget.onSeeAll,
                           ),
                         ],
@@ -535,7 +554,7 @@ class _PortfolioContent extends StatelessWidget {
     this.onSeeAll,
   });
 
-  final List<_PortfolioItem> items;
+  final List<PortfolioDisplayItem> items;
   final ValueChanged<String>? onSeeAll;
 
   @override
@@ -577,7 +596,7 @@ class _PortfolioRow extends StatelessWidget {
     this.onSeeAll,
   });
 
-  final _PortfolioItem item;
+  final PortfolioDisplayItem item;
   final bool showTopBorder;
   final VoidCallback? onSeeAll;
 
@@ -655,20 +674,4 @@ class _PortfolioRow extends StatelessWidget {
     fontWeight: FontWeight.w400,
     height: 1.5,
   );
-}
-
-class _PortfolioItem {
-  const _PortfolioItem({
-    required this.name,
-    required this.amount,
-    required this.numericValue,
-    required this.transactions,
-    required this.color,
-  });
-
-  final String name;
-  final String amount;
-  final double numericValue;
-  final String transactions;
-  final Color color;
 }
