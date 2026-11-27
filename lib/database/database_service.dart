@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
 import 'receipt_model.dart';
-import 'dart:async';
 
 class DatabaseService {
   static final DatabaseService instance = DatabaseService._internal();
@@ -38,7 +38,7 @@ class DatabaseService {
         store_name TEXT NOT NULL,
         date TEXT NOT NULL,
         total_amount REAL NOT NULL,
-        category TEXT NOT NULL DEFAULT 'Food & Beverages',
+        category TEXT NOT NULL DEFAULT 'Makanan',
         source_of_funds TEXT NOT NULL DEFAULT 'Cash',
         image_path TEXT,
         note TEXT NOT NULL DEFAULT ''
@@ -73,7 +73,7 @@ class DatabaseService {
 
     if (oldVersion < 5) {
       await db.execute(
-        "ALTER TABLE receipts ALTER COLUMN category SET DEFAULT 'Food & Beverages'",
+        "ALTER TABLE receipts ALTER COLUMN category SET DEFAULT 'Makanan'",
       ).catchError((_) async {});
     }
   }
@@ -119,33 +119,59 @@ class DatabaseService {
         .toList();
   }
 
-  Future<int> updateReceipt(ReceiptModel receipt) async {
-    if (receipt.id == null) return 0;
+  Future<int> updateReceipt({
+    int? id,
+    String? storeName,
+    double? totalAmount,
+    String? category,
+    String? sourceOfFunds,
+    String? note,
+    String? imagePath,
+    List<ReceiptItem>? items,
+    ReceiptModel? model,
+  }) async {
+    final targetId = model?.id ?? id;
+    if (targetId == null) return 0;
+
     final db = await database;
+    final resolvedStore = model?.storeName ?? storeName;
+    final resolvedTotal = model?.totalAmount ?? totalAmount;
+    final resolvedCategory = model?.category ?? category;
+    final resolvedSource = model?.sourceOfFunds ?? sourceOfFunds;
+    final resolvedNote = model?.note ?? note;
+    final resolvedImage = model?.imagePath ?? imagePath;
+    final resolvedItems = model?.items ?? items;
 
     return db.transaction((txn) async {
-      final updated = await txn.update(
-        'receipts',
-        {
-          'store_name': receipt.storeName,
-          'total_amount': receipt.totalAmount,
-          'category': receipt.category,
-          'source_of_funds': receipt.sourceOfFunds,
-          'note': receipt.note,
-          if (receipt.imagePath != null) 'image_path': receipt.imagePath,
-        },
-        where: 'id = ?',
-        whereArgs: [receipt.id],
-      );
+      final values = <String, Object?>{
+        'store_name': ?resolvedStore,
+        'total_amount': ?resolvedTotal,
+        'category': ?resolvedCategory,
+        'source_of_funds': ?resolvedSource,
+        'note': ?resolvedNote,
+        'image_path': ?resolvedImage,
+      };
 
-      await txn.delete(
-        'receipt_items',
-        where: 'receipt_id = ?',
-        whereArgs: [receipt.id],
-      );
+      int updated = 0;
+      if (values.isNotEmpty) {
+        updated = await txn.update(
+          'receipts',
+          values,
+          where: 'id = ?',
+          whereArgs: [targetId],
+        );
+      }
 
-      for (final item in receipt.items) {
-        await txn.insert('receipt_items', item.toMap(receiptId: receipt.id));
+      if (resolvedItems != null) {
+        await txn.delete(
+          'receipt_items',
+          where: 'receipt_id = ?',
+          whereArgs: [targetId],
+        );
+
+        for (final item in resolvedItems) {
+          await txn.insert('receipt_items', item.toMap(receiptId: targetId));
+        }
       }
 
       return updated;

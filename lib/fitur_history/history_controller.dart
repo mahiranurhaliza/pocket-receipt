@@ -25,15 +25,34 @@ class HistoryController {
   final DatabaseService _db;
 
   static const List<String> monthNames = [
+    'Jan',
+    'Feb',
+    'Mar',
+    'Apr',
     'May',
     'Jun',
     'Jul',
     'Aug',
     'Sep',
     'Oct',
+    'Nov',
+    'Dec',
   ];
 
-  static const List<int> monthNumbers = [5, 6, 7, 8, 9, 10];
+  static const List<int> monthNumbers = [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+  ];
 
   final NumberFormat _rupiahFormatter = NumberFormat.currency(
     locale: 'id_ID',
@@ -43,9 +62,17 @@ class HistoryController {
 
   String formatRupiah(double amount) => _rupiahFormatter.format(amount);
 
+  String formatReceiptDateTime(DateTime date) =>
+      '${DateFormat('d MMM yyyy HH:mm:ss').format(date)} WIB';
+
   int parseRupiah(String text) {
-    final digits = text.replaceAll(RegExp(r'[^0-9]'), '');
-    return int.tryParse(digits) ?? 0;
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return 0;
+    final isNegative = trimmed.startsWith('-') ||
+        (trimmed.startsWith('(') && trimmed.endsWith(')'));
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    final parsed = int.tryParse(digits) ?? 0;
+    return isNegative ? -parsed : parsed;
   }
 
   Future<List<ReceiptModel>> loadReceiptsForMonthIndex(int monthIndex) async {
@@ -68,12 +95,10 @@ class HistoryController {
 
     return grouped.entries.map((entry) {
       final firstDate = entry.value.first.date;
-      final dateTimeText =
-          '${DateFormat('d MMM yyyy HH:mm:ss').format(firstDate)} WIB';
 
       return HistoryDayGroup(
         dateLabel: entry.key,
-        dateTimeLabel: dateTimeText,
+        dateTimeLabel: formatReceiptDateTime(firstDate),
         receipts: entry.value,
       );
     }).toList();
@@ -85,6 +110,7 @@ class HistoryController {
         HistoryProduct(
           name: receipt.storeName,
           price: formatRupiah(receipt.totalAmount),
+          rawPrice: receipt.totalAmount,
           quantity: 1,
         ),
       ];
@@ -95,7 +121,8 @@ class HistoryController {
           (item) => HistoryProduct(
             name: item.name,
             price: formatRupiah(item.price),
-            quantity: item.quantity,
+            rawPrice: item.price,
+            quantity: item.quantity > 0 ? item.quantity : 1,
           ),
         )
         .toList();
@@ -107,32 +134,50 @@ class HistoryController {
   }) async {
     if (original.id == null) return;
 
-    final updatedItems = result.products
-        .map(
-          (prod) => ReceiptItem(
-            name: prod.name,
-            quantity: prod.quantity > 0 ? prod.quantity : 1,
-            price: parseRupiah(prod.price).toDouble(),
-          ),
-        )
-        .toList();
+    // Menggabungkan item dengan nama yang sama berdasarkan harga satuan (`price`)
+    final Map<String, ReceiptItem> mergedMap = {};
+    for (var i = 0; i < result.products.length; i++) {
+      final prod = result.products[i];
+      final cleanName =
+          prod.name.replaceAll(RegExp(r'\s*\(\d+x\)$'), '').trim();
+      final name = cleanName.isEmpty ? 'Produk ${i + 1}' : cleanName;
+      final qty = prod.quantity > 0 ? prod.quantity : 1;
+      final unitPrice = prod.rawPrice != 0
+          ? prod.rawPrice
+          : parseRupiah(prod.price).toDouble();
 
+      final key = '${name.toLowerCase()}_${unitPrice.toStringAsFixed(0)}';
+      if (mergedMap.containsKey(key)) {
+        final existing = mergedMap[key]!;
+        mergedMap[key] = existing.copyWith(
+          quantity: existing.quantity + qty,
+        );
+      } else {
+        mergedMap[key] = ReceiptItem(
+          name: name,
+          quantity: qty,
+          price: unitPrice,
+        );
+      }
+    }
+
+    final updatedItems = mergedMap.values.toList();
     final calculatedTotal = updatedItems.fold<double>(
       0.0,
       (sum, item) => sum + item.subtotal,
     );
 
-    final updatedModel = original.copyWith(
+    await _db.updateReceipt(
+      id: original.id!,
       storeName: result.merchant.trim().isEmpty
           ? original.storeName
           : result.merchant.trim(),
       totalAmount: calculatedTotal,
       category: result.category,
       sourceOfFunds: result.sourceOfFunds,
+      note: result.note.trim(),
       items: updatedItems,
     );
-
-    await _db.updateReceipt(updatedModel);
   }
 
   Future<void> deleteReceiptWithImage(ReceiptModel receipt) async {

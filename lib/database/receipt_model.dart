@@ -25,7 +25,7 @@ class ReceiptItem {
 
   Map<String, dynamic> toMap({int? receiptId}) {
     return {
-      if (receiptId != null) 'receipt_id': receiptId,
+      'receipt_id': ?receiptId,
       'name': name,
       'quantity': quantity,
       'price': price,

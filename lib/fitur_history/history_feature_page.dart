@@ -14,29 +14,63 @@ class HistoryFeaturePage extends StatefulWidget {
 
 class _HistoryFeaturePageState extends State<HistoryFeaturePage> {
   final HistoryController _controller = HistoryController();
-  int _selectedMonthIndex = 5; // Default 'Oct' sesuai HistoryScreen
-  List<HistoryDayGroup> _dayGroups = const [];
+
+  int _selectedMonthIndex = DateTime.now().month - 1;
   bool _loading = true;
+  List<HistoryDayItem> _days = const [];
 
   @override
   void initState() {
     super.initState();
-    _refreshHistory();
+    _loadHistory();
   }
 
-  Future<void> _refreshHistory() async {
+  Future<void> _loadHistory() async {
     setState(() => _loading = true);
+
     final receipts =
         await _controller.loadReceiptsForMonthIndex(_selectedMonthIndex);
+    final groups = _controller.groupByDay(receipts);
+
+    final mappedDays = groups.map((group) {
+      final txs = group.receipts.map((receipt) {
+        final txDateTime = _controller.formatReceiptDateTime(receipt.date);
+        return HistoryTransactionItem(
+          merchant: receipt.storeName,
+          amount: _controller.formatRupiah(receipt.totalAmount),
+          products: _controller.mapToHistoryProducts(receipt),
+          detailTotal: _controller.formatRupiah(receipt.totalAmount),
+          sourceOfFunds: receipt.sourceOfFunds,
+          category: receipt.category,
+          note: receipt.note,
+          receiptAsset: receipt.imagePath,
+          onTap: () => _openDetail(
+            receipt: receipt,
+            dateTimeLabel: txDateTime,
+          ),
+        );
+      }).toList();
+
+      return HistoryDayItem(
+        date: group.dateLabel,
+        dateTime: group.dateTimeLabel,
+        transactions: txs,
+      );
+    }).toList();
+
     if (!mounted) return;
     setState(() {
-      _dayGroups = _controller.groupByDay(receipts);
+      _days = mappedDays;
       _loading = false;
     });
   }
 
-  Future<void> openReceiptDetail(
-    BuildContext context, {
+  Future<void> _onMonthSelected(int index) async {
+    setState(() => _selectedMonthIndex = index);
+    await _loadHistory();
+  }
+
+  Future<void> _openDetail({
     required ReceiptModel receipt,
     required String dateTimeLabel,
   }) async {
@@ -49,30 +83,30 @@ class _HistoryFeaturePageState extends State<HistoryFeaturePage> {
           total: _controller.formatRupiah(receipt.totalAmount),
           sourceOfFunds: receipt.sourceOfFunds,
           category: receipt.category,
+          note: receipt.note,
           receiptAsset: receipt.imagePath,
+          onResult: (liveResult) async {
+            if (liveResult.deleted) {
+              await _controller.deleteReceiptWithImage(receipt);
+            } else {
+              await _controller.updateFromDetailResult(
+                original: receipt,
+                result: liveResult,
+              );
+            }
+          },
         ),
       ),
     );
 
-    if (result == null || !mounted) return;
-
-    if (result.deleted) {
-      await _controller.deleteReceiptWithImage(receipt);
-    } else {
-      await _controller.updateFromDetailResult(
-        original: receipt,
-        result: result,
-      );
-    }
-
-    if (mounted) {
-      await _refreshHistory();
+    if (result != null && mounted) {
+      await _loadHistory();
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading && _dayGroups.isEmpty) {
+    if (_loading && _days.isEmpty) {
       return const Scaffold(
         backgroundColor: Color(0xFFDDDDDD),
         body: Center(
@@ -81,6 +115,12 @@ class _HistoryFeaturePageState extends State<HistoryFeaturePage> {
       );
     }
 
-    return const HistoryScreen();
+    return HistoryScreen(
+      months: HistoryController.monthNames,
+      selectedMonthIndex: _selectedMonthIndex,
+      onMonthSelected: _onMonthSelected,
+      days: _days,
+      onTransactionChanged: _loadHistory,
+    );
   }
 }

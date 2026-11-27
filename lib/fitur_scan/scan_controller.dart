@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'dart:ui' show Offset;
 
 import 'package:camera/camera.dart';
 import 'package:image_picker/image_picker.dart';
@@ -88,6 +89,49 @@ class ScanController {
     return _flashEnabled;
   }
 
+  /// Mengatur titik fokus dan eksposur kamera berdasarkan koordinat ternormalisasi `(0.0..1.0, 0.0..1.0)`.
+  Future<void> focusAtNormalizedPoint(Offset normalizedPoint) async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    final clamped = Offset(
+      normalizedPoint.dx.clamp(0.0, 1.0),
+      normalizedPoint.dy.clamp(0.0, 1.0),
+    );
+
+    try {
+      if (controller.value.focusPointSupported) {
+        await controller.setFocusPoint(clamped);
+      }
+    } catch (_) {}
+
+    try {
+      if (controller.value.exposurePointSupported) {
+        await controller.setExposurePoint(clamped);
+      }
+    } catch (_) {}
+
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+    } catch (_) {}
+  }
+
+  /// Mengembalikan mode fokus dan titik fokus/eksposur ke default otomatis.
+  Future<void> resetFocus() async {
+    final controller = _cameraController;
+    if (controller == null || !controller.value.isInitialized) return;
+
+    try {
+      await controller.setFocusMode(FocusMode.auto);
+      if (controller.value.focusPointSupported) {
+        await controller.setFocusPoint(null);
+      }
+      if (controller.value.exposurePointSupported) {
+        await controller.setExposurePoint(null);
+      }
+    } catch (_) {}
+  }
+
   Future<ScanCaptureOutcome?> captureAndScan() async {
     final controller = _cameraController;
     if (controller == null || !controller.value.isInitialized) {
@@ -124,10 +168,11 @@ class ScanController {
       return await OcrService.scanReceipt(imagePath);
     } catch (_) {
       return const OcrResult(
-        storeName: 'Alfamart',
+        storeName: '',
         totalAmount: 0,
         rawText: '',
         items: [ReceiptItem(name: 'Item 1', quantity: 1, price: 0)],
+        receiptDateText: '',
       );
     }
   }
@@ -149,6 +194,48 @@ class ScanController {
     return copied.path;
   }
 
+  List<ReceiptItem> normalizeItems(List<ReceiptItem> rawItems) {
+  final blockedWords = RegExp(
+    r'\b(total|total item|total belanja|total disc|subtotal|sub total|subtota\w*|jumlah|tunai|kembalian)\b',
+    caseSensitive: false,
+  );
+
+  final filtered = rawItems
+      .where((item) => !blockedWords.hasMatch(item.name.trim()))
+      .toList();
+
+  final sourceList = filtered.isNotEmpty
+        ? filtered
+        : [const ReceiptItem(name: 'nama produk', quantity: 1, price: 0)];
+
+    final Map<String, ReceiptItem> merged = {};
+    for (int i = 0; i < sourceList.length; i++) {
+      final item = sourceList[i];
+      final name =
+          item.name.trim().isEmpty ? 'nama produk' : item.name.trim();
+      final qty = item.quantity > 0 ? item.quantity : 1;
+      final price = item.price.isFinite ? item.price : 0.0;
+
+      final key = '${name.toLowerCase()}_${price.toStringAsFixed(0)}';
+      if (merged.containsKey(key)) {
+        final existing = merged[key]!;
+        merged[key] = ReceiptItem(
+          name: existing.name,
+          quantity: existing.quantity + qty,
+          price: existing.price,
+        );
+      } else {
+        merged[key] = ReceiptItem(
+          name: name,
+          quantity: qty,
+          price: price,
+        );
+      }
+    }
+
+    return merged.values.toList();
+}
+
   Future<int> saveReceipt({
     required String storeName,
     required String category,
@@ -156,20 +243,29 @@ class ScanController {
     required List<ReceiptItem> items,
     String? imagePath,
     String note = '',
+    String receiptDateText = '',
   }) async {
     final savedPath = await persistImage(imagePath);
-    final total =
-        items.fold<double>(0, (sum, item) => sum + item.subtotal);
+    final normalizedItems = normalizeItems(items);
+    final total = normalizedItems.fold<double>( 0,
+          (sum, item) => sum + (item.price * item.quantity),);
+
+    final trimmedNote = note.trim();
+    final cleanReceiptDate = receiptDateText.trim();
+    final effectiveNote = trimmedNote.isNotEmpty
+        ? trimmedNote
+        : (cleanReceiptDate.isNotEmpty ? 'Tgl struk: $cleanReceiptDate' : '');
 
     final model = ReceiptModel(
-      storeName: storeName.trim().isEmpty ? 'Alfamart' : storeName.trim(),
+      storeName:
+          storeName.trim().isEmpty ? 'Toko Tanpa Nama' : storeName.trim(),
       date: DateTime.now(),
       totalAmount: total,
       category: category,
       sourceOfFunds: sourceOfFunds,
       imagePath: savedPath,
-      note: note,
-      items: items,
+      note: effectiveNote,
+      items: normalizedItems,
     );
 
     return DatabaseService.instance.insertReceipt(model);

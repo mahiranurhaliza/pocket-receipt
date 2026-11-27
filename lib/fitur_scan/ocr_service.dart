@@ -7,17 +7,20 @@ class OcrResult {
   final double totalAmount;
   final String rawText;
   final List<ReceiptItem> items;
+  final String receiptDateText;
 
   const OcrResult({
     required this.storeName,
     required this.totalAmount,
     required this.rawText,
     this.items = const [],
+    this.receiptDateText = '',
   });
 }
 
 class OcrService {
-  static const List<String> _nonProductKeywords = [
+  /// Kata kunci ringkasan/pembayaran yang bukan item produk maupun biaya tambahan.
+  static const List<String> _summaryOrPaymentKeywords = [
     'total',
     'total item',
     'total disc',
@@ -34,17 +37,7 @@ class OcrService {
     'kembali',
     'kembalian',
     'change',
-    'ppn',
-    'dpp',
-    'pajak',
-    'tax',
-    'diskon',
-    'discount',
-    'hemat',
-    'anda menyimpan',
     'saldo',
-    'biaya admin',
-    'admin',
     'pembayaran',
     'metode pembayaran',
     'gopay',
@@ -52,14 +45,72 @@ class OcrService {
     'dana',
     'shopeepay',
     'qris',
+    'status',
+    'sukses',
+    'belum lunas',
+    'id transaksi',
+    'nama acquirer',
+    'nama merchant',
+    'lokasi merchant',
+    'merchant pan',
+    'terminal id',
+    'open time',
+    'user:',
+    'table ',
+    'pax',
   ];
 
+  /// Kata kunci biaya tambahan / pajak / layanan / pembulatan yang masuk perhitungan.
+  static const List<String> _chargeKeywords = [
+    'service',
+    'ppn',
+    'pajak',
+    'tax',
+    'pb 1',
+    'pb1',
+    'rounding',
+    'pembulatan',
+    'biaya admin',
+    'admin',
+  ];
+
+  static bool _isRoundingLine(String text) {
+    final normalized =
+        text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return false;
+    return normalized == 'rounding' ||
+        normalized.startsWith('rounding ') ||
+        normalized.startsWith('rounding:') ||
+        normalized.contains(' rounding') ||
+        normalized == 'pembulatan' ||
+        normalized.startsWith('pembulatan ') ||
+        normalized.startsWith('pembulatan:') ||
+        normalized.contains(' pembulatan');
+  }
+
+  static bool _isChargeLine(String text) {
+    final normalized =
+        text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+    if (normalized.isEmpty) return false;
+    return _chargeKeywords.any(
+      (kw) =>
+          normalized == kw ||
+          normalized.startsWith('$kw ') ||
+          normalized.startsWith('$kw:') ||
+          normalized.startsWith('$kw.') ||
+          normalized.contains(' $kw ') ||
+          normalized.endsWith(' $kw'),
+    );
+  }
+
   static bool _isNonProductLine(String text) {
+    if (_isChargeLine(text)) return false;
+
     final normalized =
         text.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
     if (normalized.isEmpty) return true;
 
-    return _nonProductKeywords.any(
+    return _summaryOrPaymentKeywords.any(
       (kw) =>
           normalized == kw ||
           normalized.startsWith('$kw ') ||
@@ -69,8 +120,54 @@ class OcrService {
           normalized.endsWith(' $kw') ||
           normalized.contains('total item') ||
           normalized.contains('total belanja') ||
-          normalized.contains('total disc'),
+          normalized.contains('total disc') ||
+          normalized.contains('jumlah tagihan'),
     );
+  }
+
+  static double _parseSignedNumber(String raw) {
+    final trimmed = raw.trim();
+    final isNegative = trimmed.startsWith('-') ||
+        (trimmed.startsWith('(') && trimmed.endsWith(')'));
+    final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+    final value = double.tryParse(digits) ?? 0;
+    return isNegative ? -value : value;
+  }
+
+  static double _normalizeItemPrice(String itemName, double rawPrice) {
+    if (_isRoundingLine(itemName)) {
+      return -rawPrice.abs();
+    }
+    return rawPrice;
+  }
+
+  static bool _looksLikeAddressOrLongText(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return true;
+
+    final wordCount = trimmed.split(RegExp(r'\s+')).length;
+    if (trimmed.length > 38 || wordCount > 6) {
+      return true;
+    }
+
+    final lower = trimmed.toLowerCase();
+    final addressPatterns = [
+      RegExp(
+        r'\b(jl\.?|jln\.?|jalan|gg\.?|gang|blok|kav\.?|no\.?|rt\.?|rw\.?)\b',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'\b(kel\.?|kelurahan|kec\.?|kecamatan|kab\.?|kabupaten|kota|prov\.?|provinsi|regency)\b',
+        caseSensitive: false,
+      ),
+      RegExp(
+        r'\b(selatan|utara|timur|barat|pusat)\b',
+        caseSensitive: false,
+      ),
+      RegExp(r'\b\d{5}\b'),
+    ];
+
+    return addressPatterns.any((regex) => regex.hasMatch(lower));
   }
 
   static Future<OcrResult> scanReceipt(String imagePath) async {
@@ -116,15 +213,16 @@ class OcrService {
       }
 
       final String detectedStore = _detectStoreName(reconstructedRows);
+      final String detectedDate = _detectReceiptDate(reconstructedRows);
 
       final rpRegex = RegExp(
-        r'(?:rp|idr)\.?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)',
+        r'(?:rp|idr)\.?\s*(\(?\s*-?\s*(?:\d{1,3}(?:[.,]\d{3})+|\d+)\s*\)?)',
         caseSensitive: false,
       );
       final bool hasExplicitRp = rpRegex.hasMatch(fullText);
 
       List<ReceiptItem> detectedItems = [];
-      double fallbackTotal = 0;
+      double fallbackTotal = _extractReceiptTotal(reconstructedRows, rpRegex);
 
       if (hasExplicitRp) {
         detectedItems = _parseExplicitRpRows(
@@ -134,7 +232,9 @@ class OcrService {
             if (val > fallbackTotal) fallbackTotal = val;
           },
         );
-      } else {
+      }
+
+      if (detectedItems.isEmpty) {
         detectedItems = _parseCashierReceiptRows(
           reconstructedRows,
           (val) {
@@ -145,101 +245,276 @@ class OcrService {
 
       if (detectedItems.isEmpty) {
         detectedItems.add(
-          ReceiptItem(
-            name: detectedStore,
+          const ReceiptItem(
+            name: 'nama produk',
             quantity: 1,
-            price: fallbackTotal,
+            price: 0,
           ),
         );
       }
 
-      final double totalFromItems =
-          detectedItems.fold(0, (sum, item) => sum + item.subtotal);
+      final double totalFromItems = detectedItems.fold(
+  0,
+  (sum, item) => sum + (item.price * item.quantity),
+);
+
+      final double finalTotal =
+          detectedItems.isNotEmpty ? totalFromItems : fallbackTotal;
 
       return OcrResult(
         storeName: detectedStore,
-        totalAmount: totalFromItems > 0 ? totalFromItems : fallbackTotal,
+        totalAmount: finalTotal,
         rawText: fullText,
         items: detectedItems,
+        receiptDateText: detectedDate,
       );
     } finally {
       await textRecognizer.close();
     }
   }
 
+  static double _extractReceiptTotal(List<String> rows, RegExp rpRegex) {
+    double best = 0;
+    for (final row in rows) {
+      final lower = row.toLowerCase().trim();
+      final isTotalRow = lower.startsWith('total') ||
+          lower.contains('grand total') ||
+          lower.contains('total belanja') ||
+          lower.contains('jumlah tagihan');
+      if (!isTotalRow) continue;
+
+      final rpMatch = rpRegex.firstMatch(row);
+      if (rpMatch != null) {
+        final val = _parseSignedNumber(rpMatch.group(1)!).abs();
+        if (val > best) best = val;
+        continue;
+      }
+
+      final numMatches =
+          RegExp(r'(\d{1,3}(?:[.,]\d{3})+|\d+)').allMatches(row);
+      for (final m in numMatches) {
+        final val = _parseSignedNumber(m.group(1)!).abs();
+        if (val >= 100 && val < 500000000 && val > best) {
+          best = val;
+        }
+      }
+    }
+    return best;
+  }
+
+  static DateTime? parseReceiptDate(String text) {
+    final cleaned = text.trim();
+    if (cleaned.isEmpty) return null;
+
+    final monthMap = <String, int>{
+      'jan': 1,
+      'januari': 1,
+      'feb': 2,
+      'februari': 2,
+      'mar': 3,
+      'maret': 3,
+      'apr': 4,
+      'april': 4,
+      'may': 5,
+      'mei': 5,
+      'jun': 6,
+      'juni': 6,
+      'jul': 7,
+      'juli': 7,
+      'aug': 8,
+      'agu': 8,
+      'agustus': 8,
+      'sep': 9,
+      'sept': 9,
+      'september': 9,
+      'oct': 10,
+      'okt': 10,
+      'oktober': 10,
+      'nov': 11,
+      'november': 11,
+      'dec': 12,
+      'des': 12,
+      'desember': 12,
+    };
+
+    int hour = 0;
+    int minute = 0;
+    int second = 0;
+
+    final timeMatch =
+        RegExp(r'\b(\d{1,2}):(\d{2})(?::(\d{2}))?\b').firstMatch(cleaned);
+    if (timeMatch != null) {
+      final h = int.tryParse(timeMatch.group(1)!) ?? 0;
+      final m = int.tryParse(timeMatch.group(2)!) ?? 0;
+      final s = int.tryParse(timeMatch.group(3) ?? '0') ?? 0;
+      if (h >= 0 && h <= 23 && m >= 0 && m <= 59 && s >= 0 && s <= 59) {
+        hour = h;
+        minute = m;
+        second = s;
+      }
+    }
+
+    int normalizeYear(int y) {
+      if (y >= 100) return y;
+      return y >= 70 ? 1900 + y : 2000 + y;
+    }
+
+    bool isValidYmd(int y, int m, int d) {
+      if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+      final dt = DateTime(y, m, d);
+      return dt.year == y && dt.month == m && dt.day == d;
+    }
+
+    final namedMatch = RegExp(
+      r'\b(\d{1,2})\s+([a-zA-Z]+)\s+(\d{2,4})\b',
+    ).firstMatch(cleaned);
+    if (namedMatch != null) {
+      final day = int.tryParse(namedMatch.group(1)!);
+      final monthKey = namedMatch.group(2)!.toLowerCase();
+      final rawYear = int.tryParse(namedMatch.group(3)!);
+      final month = monthMap[monthKey];
+
+      if (day != null && month != null && rawYear != null) {
+        final year = normalizeYear(rawYear);
+        if (isValidYmd(year, month, day)) {
+          return DateTime(year, month, day, hour, minute, second);
+        }
+      }
+    }
+
+    final ymdMatch = RegExp(
+      r'\b(\d{4})[/\-.](\d{1,2})[/\-.](\d{1,2})\b',
+    ).firstMatch(cleaned);
+    if (ymdMatch != null) {
+      final year = int.tryParse(ymdMatch.group(1)!);
+      final month = int.tryParse(ymdMatch.group(2)!);
+      final day = int.tryParse(ymdMatch.group(3)!);
+      if (year != null &&
+          month != null &&
+          day != null &&
+          isValidYmd(year, month, day)) {
+        return DateTime(year, month, day, hour, minute, second);
+      }
+    }
+
+    final dmyMatch = RegExp(
+      r'\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{2,4})\b',
+    ).firstMatch(cleaned);
+    if (dmyMatch != null) {
+      final day = int.tryParse(dmyMatch.group(1)!);
+      final month = int.tryParse(dmyMatch.group(2)!);
+      final rawYear = int.tryParse(dmyMatch.group(3)!);
+      if (day != null && month != null && rawYear != null) {
+        final year = normalizeYear(rawYear);
+        if (isValidYmd(year, month, day)) {
+          return DateTime(year, month, day, hour, minute, second);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  static String _detectReceiptDate(List<String> rows) {
+    final monthNameRegex = RegExp(
+      r'\b\d{1,2}\s+(?:jan|feb|mar|apr|may|mei|jun|jul|aug|agu|sep|oct|okt|nov|dec|des)[a-z]*\s+\d{2,4}(?:\s*,?\s*\d{1,2}[:.]\d{2}(?:[:.]\d{2})?)?\b',
+      caseSensitive: false,
+    );
+    final numericDateRegex = RegExp(
+      r'\b(\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2,4}|\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2})(?:\s*,?\s*\d{1,2}[:.]\d{2}(?:[:.]\d{2})?)?\b',
+    );
+    final dateLabelLineRegex = RegExp(
+      r'\b(tgl|tanggal|date|open\s*time|waktu|jam)\b',
+      caseSensitive: false,
+    );
+
+    for (final row in rows) {
+      final cleanRow = row.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      if (!dateLabelLineRegex.hasMatch(cleanRow)) continue;
+
+      final mMonth = monthNameRegex.firstMatch(cleanRow);
+      if (mMonth != null) return mMonth.group(0)!.trim();
+
+      final mNum = numericDateRegex.firstMatch(cleanRow);
+      if (mNum != null) return mNum.group(0)!.trim();
+    }
+
+    for (final row in rows) {
+      final cleanRow = row.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      final mMonth = monthNameRegex.firstMatch(cleanRow);
+      if (mMonth != null) return mMonth.group(0)!.trim();
+    }
+
+    for (final row in rows) {
+      final cleanRow = row.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      final mNum = numericDateRegex.firstMatch(cleanRow);
+      if (mNum != null) return mNum.group(0)!.trim();
+    }
+
+    return '';
+  }
+
   static String _detectStoreName(List<String> rows) {
-    final knownBrands = [
-      'alfamart',
-      'indomaret',
-      'alfamidi',
-      'superindo',
-      'hypermart',
-      'transmart',
-      'lawson',
-      'familymart',
-      'circle k',
-      'mcdonald',
-      'kfc',
-      'hokben',
-      'starbucks',
-      'mixue',
-      'fore coffee',
-      'kopi kenangan',
-      'gramedia',
-      'guardian',
-      'watsons',
-      'sociolla',
-      'uniqlo',
-      'miniso',
+    // 1. Cek seluruh baris struk untuk frasa pembayaran/transfer eksplisit (tidak terbatas baris awal)
+    const transferPatterns = [
+      'berhasil bayar ke ',
+      'bayar ke ',
+      'kirim ke ',
     ];
 
+    for (final row in rows) {
+      final cleanRow = row.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      final lower = cleanRow.toLowerCase();
+
+      for (final pattern in transferPatterns) {
+        final idx = lower.indexOf(pattern);
+        if (idx != -1) {
+          final startIdx = idx + pattern.length;
+          if (startIdx < cleanRow.length) {
+            final candidate =
+                cleanRow.substring(startIdx).split('-').first.trim();
+            if (candidate.isNotEmpty) {
+              return candidate;
+            }
+          }
+        }
+      }
+    }
+
+    // 2. Cek label "Nama merchant" di baris mana pun
     for (int i = 0; i < rows.length; i++) {
-      final lower = rows[i].toLowerCase();
-      if (lower.contains('bayar ke ')) {
-        final idx = lower.indexOf('bayar ke ');
-        final candidate = rows[i].substring(idx + 9).split('-').first.trim();
-        if (candidate.isNotEmpty) return candidate;
-      }
-      if (lower.startsWith('merchant name')) {
-        final parts = rows[i].split(RegExp(r'\s{2,}'));
-        if (parts.length > 1 && parts.last.trim().isNotEmpty) {
-          return parts.last.trim();
+      final cleanRow = rows[i].replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      final lower = cleanRow.toLowerCase();
+
+      if (lower.startsWith('nama merchant')) {
+        final afterColon = cleanRow.replaceFirst(
+          RegExp(r'^nama\s+merchant\s*:?\s*', caseSensitive: false),
+          '',
+        );
+        if (afterColon.isNotEmpty) return afterColon.trim();
+        if (i + 1 < rows.length) {
+          final nextClean =
+              rows[i + 1].replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+          if (nextClean.isNotEmpty) return nextClean;
         }
       }
     }
 
-    for (int i = 0; i < rows.length - 1; i++) {
-      if (RegExp(r'^(?:rp|idr)\.?\s*\d', caseSensitive: false)
-          .hasMatch(rows[i].trim())) {
-        final nextLine = rows[i + 1].split('   ').first.trim();
-        if (nextLine.length >= 3 && !_isNonProductLine(nextLine)) {
-          return nextLine;
-        }
-      }
-    }
-
-    for (final row in rows.take(8)) {
-      final lower = row.toLowerCase();
-      for (final brand in knownBrands) {
-        if (lower.contains(brand)) {
-          return brand
-              .split(' ')
-              .map((w) => w[0].toUpperCase() + w.substring(1))
-              .join(' ');
-        }
-      }
-    }
-
-    final skipHeader = [
+    // 3. Fallback ke baris paling atas yang singkat dan bukan alamat
+    const skipTopHeader = [
       'status',
+      'sukses',
+      'belum lunas',
       'rincian transaksi',
+      'detail pembayaran',
       'npwp',
-      'jl.',
-      'jalan',
       'tower',
       'bon ',
       'kasir',
       'tgl',
+      'tanggal',
+      'waktu',
+      'open time',
       'member',
       'telp',
       'wa:',
@@ -248,20 +523,31 @@ class OcrService {
       'ovo',
       'dana',
       'shopeepay',
+      'hore,',
+      'split -',
+      'bagi bukti',
     ];
 
     for (final row in rows.take(6)) {
-      final lower = row.toLowerCase();
-      if (skipHeader.any((k) => lower.contains(k))) continue;
-      if (RegExp(r'^(rp|idr|\d)', caseSensitive: false).hasMatch(row)) continue;
-      if (row.length >= 3) {
-        return row.split('   ').first.trim();
+      final cleanFirst = row.split(RegExp(r'\s{2,}')).first.trim();
+      final lower = cleanFirst.toLowerCase();
+      if (cleanFirst.length < 3) continue;
+      if (skipTopHeader.any((k) => lower.contains(k))) continue;
+      if (RegExp(r'^(rp|idr|\d)', caseSensitive: false).hasMatch(cleanFirst)) {
+        continue;
       }
+      if (RegExp(r'^[A-Z0-9]{10,}$').hasMatch(cleanFirst) &&
+          !RegExp(r'^[A-Z\s&.\-]+$').hasMatch(cleanFirst)) {
+        continue;
+      }
+      if (_looksLikeAddressOrLongText(cleanFirst)) continue;
+
+      return cleanFirst;
     }
 
-    return 'Alfamart';
+    return 'Toko Baru';
   }
-
+  
   static List<ReceiptItem> _parseExplicitRpRows(
     List<String> rows,
     RegExp rpRegex,
@@ -274,22 +560,19 @@ class OcrService {
       final match = rpRegex.firstMatch(row);
       if (match == null) continue;
 
-      final digits = match.group(1)!.replaceAll('.', '').replaceAll(',', '');
-      final price = double.tryParse(digits) ?? 0;
-      if (price <= 0 || price >= 100000000) continue;
+      final price = _parseSignedNumber(match.group(1)!);
+      if (price == 0 || price.abs() >= 100000000) continue;
 
-      onFallbackPrice(price);
+      onFallbackPrice(price.abs());
       if (_isNonProductLine(row)) continue;
 
       String itemName = row.substring(0, match.start).trim();
       itemName = itemName.replaceAll(RegExp(r'[-:=]+$'), '').trim();
 
       if (itemName.isEmpty && i > 0) {
-        final prev = rows[i - 1].split('   ').first.trim();
+        final prev = rows[i - 1].split(RegExp(r'\s{2,}')).first.trim();
         if (!rpRegex.hasMatch(prev) &&
             !_isNonProductLine(prev) &&
-            prev.toLowerCase() != 'status' &&
-            prev.toLowerCase() != 'rincian transaksi' &&
             prev.length >= 2) {
           itemName = prev;
         }
@@ -312,8 +595,8 @@ class OcrService {
         qty = int.tryParse(suffixQty.group(2)!) ?? 1;
       }
 
-      final unitPrice = qty > 0 ? price / qty : price;
-      _addOrMergeItem(grouped, itemName, qty, unitPrice);
+      final normalizedPrice = _normalizeItemPrice(itemName, price);
+      _addOrMergeItem(grouped, itemName, qty, normalizedPrice);
     }
 
     return grouped.values.toList();
@@ -324,12 +607,13 @@ class OcrService {
     void Function(double) onFallbackPrice,
   ) {
     final stopKeywords = [
+      'subtotal',
+      'sub total',
+      'subtota',
       'total item',
       'total disc',
       'total belanja',
       'grand total',
-      'subtotal',
-      'sub total',
       'jumlah',
       'tunai',
       'cash',
@@ -352,15 +636,20 @@ class OcrService {
       'tower',
       'bon ',
       'kasir',
-      'alfamart',
-      'indomaret',
-      'gading',
-      'soreang',
-      'tangerang',
+      'open time',
+      'user:',
+      'table ',
+      'pax',
+      'belum lunas',
+      'bandung regency',
+      'jawa barat',
       'telp',
       'sms/',
     ];
 
+    final qtyUnitSubtotalRegex = RegExp(
+      r'^(\d{1,3})\s*[xX*]\s*(\d{1,3}(?:[.,]\d{3})+|\d+)(?:\s+(\d{1,3}(?:[.,]\d{3})+|\d+))?$',
+    );
     final fourColRegex = RegExp(
       r'^(.+?)\s{2,}(\d{1,3})\s+(\d{1,3}(?:[.,]\d{3})+)\s+(\d{1,3}(?:[.,]\d{3})+)$',
     );
@@ -371,7 +660,7 @@ class OcrService {
       r'^(.+?)\s{2,}(\d{1,2})\s+(\d{1,3}(?:[.,]\d{3})+)$',
     );
     final twoColRegex = RegExp(
-      r'^(.+?)\s{2,}(\d{1,3}(?:[.,]\d{3})+)$',
+      r'^(.+?)\s{2,}(\(?\s*-?\s*(?:\d{1,3}(?:[.,]\d{3})+|\d+)\s*\)?)$',
     );
     final discRegex = RegExp(
       r'^(?:disc|diskon)\.?\s*-?\s*(\d{1,3}(?:[.,]\d{3})+|\d+)$',
@@ -380,56 +669,97 @@ class OcrService {
 
     final Map<String, ReceiptItem> grouped = {};
     String? lastAddedKey;
+    String? pendingProductName;
+    bool passedSubtotal = false;
 
     for (final row in rows) {
-      final lower = row.toLowerCase().trim();
+      final cleanRow = row.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+      final lower = cleanRow.toLowerCase();
 
-      if (lower.contains('total belanja') || lower.contains('grand total')) {
-        final m = RegExp(r'(\d{1,3}(?:[.,]\d{3})+)').firstMatch(row);
+      if (lower.startsWith('total') ||
+          lower.contains('total belanja') ||
+          lower.contains('grand total')) {
+        final m = RegExp(r'(\d{1,3}(?:[.,]\d{3})+)').firstMatch(cleanRow);
         if (m != null) {
-          final val = double.tryParse(
-                  m.group(1)!.replaceAll('.', '').replaceAll(',', '')) ??
-              0;
-          onFallbackPrice(val);
+          onFallbackPrice(_parseSignedNumber(m.group(1)!).abs());
         }
         break;
       }
 
-      if (stopKeywords.any((kw) => lower == kw || lower.startsWith(kw)) ||
-          _isNonProductLine(row)) {
-        if (lower.startsWith('total') ||
-            lower.startsWith('jumlah') ||
-            lower.startsWith('tunai')) {
-          break;
-        }
+      if (lower.startsWith('subtotal') || lower.startsWith('sub total')) {
+        passedSubtotal = true;
+        pendingProductName = null;
         continue;
       }
 
-      if (skipLineKeywords.any((kw) => lower.contains(kw))) continue;
+      if (passedSubtotal && !_isChargeLine(cleanRow)) {
+        pendingProductName = null;
+        continue;
+      }
 
-      final discMatch = discRegex.firstMatch(row);
+      if (stopKeywords.any((kw) => lower == kw || lower.startsWith(kw)) ||
+          _isNonProductLine(cleanRow)) {
+        if (lower.startsWith('jumlah') || lower.startsWith('tunai')) {
+          break;
+        }
+        pendingProductName = null;
+        continue;
+      }
+
+      if (skipLineKeywords.any((kw) => lower.contains(kw))) {
+        pendingProductName = null;
+        continue;
+      }
+
+      if (RegExp(r'^[A-Z0-9]{10,}$').hasMatch(cleanRow) &&
+          !RegExp(r'^[A-Z\s]+$').hasMatch(cleanRow)) {
+        pendingProductName = null;
+        continue;
+      }
+
+      final discMatch = discRegex.firstMatch(cleanRow);
       if (discMatch != null &&
           lastAddedKey != null &&
           grouped.containsKey(lastAddedKey)) {
-        final discVal = double.tryParse(
-                discMatch.group(1)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
+        final discVal = _parseSignedNumber(discMatch.group(1)!).abs();
         final prevItem = grouped[lastAddedKey]!;
-        final updatedSubtotal =
-            (prevItem.subtotal - discVal).clamp(0.0, double.infinity);
-        final updatedUnitPrice =
-            prevItem.quantity > 0 ? updatedSubtotal / prevItem.quantity : 0.0;
+        final updatedPrice = prevItem.price - discVal;
         grouped[lastAddedKey] = ReceiptItem(
           name: prevItem.name,
           quantity: prevItem.quantity,
-          price: updatedUnitPrice,
+          price: updatedPrice,
         );
+        continue;
+      }
+
+      final qSubMatch = qtyUnitSubtotalRegex.firstMatch(cleanRow);
+      if (qSubMatch != null && pendingProductName != null) {
+        final qty = (int.tryParse(qSubMatch.group(1)!) ?? 1).clamp(1, 9999);
+        double unitPrice = _parseSignedNumber(qSubMatch.group(2)!);
+        final double subtotal = qSubMatch.group(3) != null
+            ? _parseSignedNumber(qSubMatch.group(3)!)
+            : 0;
+
+        if (unitPrice <= 0 && subtotal > 0) {
+          unitPrice = subtotal / qty;
+        }
+
+        if (unitPrice.abs() >= 1 && unitPrice.abs() < 50000000) {
+          final adjustedPrice = _normalizeItemPrice(pendingProductName, unitPrice);
+          lastAddedKey = _addOrMergeItem(
+            grouped,
+            pendingProductName,
+            qty,
+            adjustedPrice,
+          );
+        }
+        pendingProductName = null;
         continue;
       }
 
       String? itemName;
       int qty = 1;
-      double rowTotalPrice = 0;
+      double unitPrice = 0;
 
       final m4 = fourColRegex.firstMatch(row);
       final m3Price = threePriceColRegex.firstMatch(row);
@@ -438,43 +768,52 @@ class OcrService {
 
       if (m4 != null) {
         itemName = m4.group(1)!.trim();
-        qty = int.tryParse(m4.group(2)!) ?? 1;
-        rowTotalPrice = double.tryParse(
-                m4.group(4)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
+        qty = (int.tryParse(m4.group(2)!) ?? 1).clamp(1, 9999);
+        unitPrice = _parseSignedNumber(m4.group(3)!);
       } else if (m3Price != null) {
         itemName = m3Price.group(1)!.trim();
-        final unitPrice = double.tryParse(
-                m3Price.group(2)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
-        rowTotalPrice = double.tryParse(
-                m3Price.group(3)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
-        qty = (unitPrice > 0 && rowTotalPrice >= unitPrice)
-            ? (rowTotalPrice / unitPrice).round()
-            : 1;
+        final firstNum = _parseSignedNumber(m3Price.group(2)!);
+        final secondNum = _parseSignedNumber(m3Price.group(3)!);
+        if (secondNum >= firstNum && firstNum > 0) {
+          qty = (secondNum / firstNum).round().clamp(1, 9999);
+          unitPrice = firstNum;
+        } else {
+          unitPrice = secondNum;
+        }
       } else if (m3Qty != null) {
         itemName = m3Qty.group(1)!.trim();
-        qty = int.tryParse(m3Qty.group(2)!) ?? 1;
-        rowTotalPrice = double.tryParse(
-                m3Qty.group(3)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
+        qty = (int.tryParse(m3Qty.group(2)!) ?? 1).clamp(1, 9999);
+        final totalRowPrice = _parseSignedNumber(m3Qty.group(3)!);
+        unitPrice = qty > 0 ? totalRowPrice / qty : totalRowPrice;
       } else if (m2 != null) {
         itemName = m2.group(1)!.trim();
-        rowTotalPrice = double.tryParse(
-                m2.group(2)!.replaceAll('.', '').replaceAll(',', '')) ??
-            0;
+        unitPrice = _parseSignedNumber(m2.group(2)!);
       }
 
       if (itemName != null &&
           itemName.length >= 2 &&
           !RegExp(r'^\d+$').hasMatch(itemName) &&
           !_isNonProductLine(itemName) &&
-          rowTotalPrice >= 100 &&
-          rowTotalPrice < 50000000) {
+          unitPrice.abs() >= 1 &&
+          unitPrice.abs() < 50000000) {
         itemName = itemName.replaceAll(RegExp(r'[-:=]+$'), '').trim();
-        final unitPrice = qty > 0 ? rowTotalPrice / qty : rowTotalPrice;
-        lastAddedKey = _addOrMergeItem(grouped, itemName, qty, unitPrice);
+        final adjustedPrice = _normalizeItemPrice(itemName, unitPrice);
+        lastAddedKey = _addOrMergeItem(grouped, itemName, qty, adjustedPrice);
+        pendingProductName = null;
+        continue;
+      }
+
+      final hasLetters = RegExp(r'[a-zA-Z]{2,}').hasMatch(cleanRow);
+      final hasPriceLikeNumber =
+          RegExp(r'\d{1,3}(?:[.,]\d{3})+').hasMatch(cleanRow);
+      if (!passedSubtotal &&
+          hasLetters &&
+          !hasPriceLikeNumber &&
+          cleanRow.length >= 2 &&
+          !_isNonProductLine(cleanRow)) {
+        pendingProductName = cleanRow.replaceAll(RegExp(r'[-:=]+$'), '').trim();
+      } else {
+        pendingProductName = null;
       }
     }
 
@@ -489,21 +828,17 @@ class OcrService {
   ) {
     if (_isNonProductLine(itemName)) return '';
     final key = itemName.toLowerCase();
-    final safeQty = qty > 0 ? qty : 1;
-
     if (grouped.containsKey(key)) {
       final existing = grouped[key]!;
-      final combinedQty = existing.quantity + safeQty;
-      final combinedSubtotal = existing.subtotal + (unitPrice * safeQty);
       grouped[key] = ReceiptItem(
         name: existing.name,
-        quantity: combinedQty,
-        price: combinedQty > 0 ? combinedSubtotal / combinedQty : unitPrice,
+        quantity: existing.quantity + qty,
+        price: unitPrice != 0 ? unitPrice : existing.price,
       );
     } else {
       grouped[key] = ReceiptItem(
         name: itemName,
-        quantity: safeQty,
+        quantity: qty > 0 ? qty : 1,
         price: unitPrice,
       );
     }

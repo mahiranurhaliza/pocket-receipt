@@ -1,19 +1,12 @@
+// ignore_for_file: use_null_aware_elements, file_names
+
 import 'dart:async';
-import 'dart:typed_data';
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-
-void main() {
-  runApp(
-    const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: HistoryDetailedScreen(),
-    ),
-  );
-}
 
 class HistoryDetailedScreen extends StatefulWidget {
   const HistoryDetailedScreen({
@@ -21,14 +14,16 @@ class HistoryDetailedScreen extends StatefulWidget {
     this.merchant = 'Alfamart',
     this.dateTime = '20 Oct 2026 11:46:18 WIB',
     this.products = const [
-      HistoryProduct(name: 'Mineral', price: 'Rp5.000'),
-      HistoryProduct(name: 'Ice Cream', price: 'Rp8.000'),
+      HistoryProduct(name: 'Mineral', price: 'Rp5.000', quantity: 1),
+      HistoryProduct(name: 'Ice Cream', price: 'Rp8.000', quantity: 1),
     ],
     this.total = 'Rp13.000',
-    this.sourceOfFunds = 'Gopay',
+    this.sourceOfFunds = 'GoPay',
     this.category = 'Food & Beverages',
+    this.note = '',
     this.receiptAsset,
     this.receiptBytes,
+    this.onResult,
   });
 
   final String merchant;
@@ -39,6 +34,8 @@ class HistoryDetailedScreen extends StatefulWidget {
   final String category;
   final String? receiptAsset;
   final Uint8List? receiptBytes;
+  final Future<void> Function(HistoryDetailedResult result)? onResult;
+  final String note;
 
   @override
   State<HistoryDetailedScreen> createState() => _HistoryDetailedScreenState();
@@ -49,6 +46,7 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
   late List<HistoryProduct> _products;
   late String _sourceOfFunds;
   late String _category;
+  late String _note;
   bool _editing = false;
   bool _bannerVisible = false;
   bool _bannerMounted = false;
@@ -57,35 +55,72 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
   Timer? _unmountBannerTimer;
 
   late final TextEditingController _merchantController;
+  late final TextEditingController _noteController;
   late List<_EditableProduct> _editableProducts;
+  late List<String> _fundOptions;
+  late List<String> _categoryOptions;
   late String _editSourceOfFunds;
   late String _editCategory;
 
-  static const _fundOptions = ['Gopay', 'BNI', 'Shopeepay', 'Cash'];
-  static const _categoryOptions = [
+  static const _baseFundOptions = [
+    'Cash',
+    'GoPay',
+    'OVO',
+    'DANA',
+    'ShopeePay',
+    'BCA',
+    'BNI',
+    'BRI',
+    'Mandiri',
+  ];
+
+  static const _baseCategoryOptions = [
     'Food & Beverages',
     'Shopping',
     'Transport',
     'Bills',
+    'Other',
   ];
+
+  String _normalizeOption(String value, List<String> options) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return options.first;
+    for (final opt in options) {
+      if (opt.toLowerCase() == trimmed.toLowerCase()) {
+        return opt;
+      }
+    }
+    return trimmed;
+  }
+
+  List<String> _buildOptions(String currentValue, List<String> base) {
+    final normalized = _normalizeOption(currentValue, base);
+    if (base.contains(normalized)) {
+      return List<String>.from(base);
+    }
+    return [normalized, ...base];
+  }
 
   @override
   void initState() {
     super.initState();
     _merchant = widget.merchant;
     _products = List.of(widget.products);
-    _sourceOfFunds = widget.sourceOfFunds;
-    _category = widget.category;
+    _note = widget.note;
+
+    _fundOptions = _buildOptions(widget.sourceOfFunds, _baseFundOptions);
+    _categoryOptions = _buildOptions(widget.category, _baseCategoryOptions);
+
+    _sourceOfFunds = _normalizeOption(widget.sourceOfFunds, _fundOptions);
+    _category = _normalizeOption(widget.category, _categoryOptions);
+
     _merchantController = TextEditingController(text: _merchant);
+    _noteController = TextEditingController(text: _note);
     _editableProducts = _products
         .map((product) => _EditableProduct.fromProduct(product))
         .toList();
-    _editSourceOfFunds = _fundOptions.contains(_sourceOfFunds)
-        ? _sourceOfFunds
-        : _fundOptions.first;
-    _editCategory = _categoryOptions.contains(_category)
-        ? _category
-        : _categoryOptions.first;
+    _editSourceOfFunds = _sourceOfFunds;
+    _editCategory = _category;
   }
 
   @override
@@ -93,6 +128,7 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
     _hideBannerTimer?.cancel();
     _unmountBannerTimer?.cancel();
     _merchantController.dispose();
+    _noteController.dispose();
     for (final product in _editableProducts) {
       product.dispose();
     }
@@ -101,16 +137,16 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
 
   void _syncEditDraft() {
     _merchantController.text = _merchant;
+    _noteController.text = _note;
     final previousProducts = _editableProducts;
     _editableProducts = _products
         .map((product) => _EditableProduct.fromProduct(product))
         .toList();
-    _editSourceOfFunds = _fundOptions.contains(_sourceOfFunds)
-        ? _sourceOfFunds
-        : _fundOptions.first;
-    _editCategory = _categoryOptions.contains(_category)
-        ? _category
-        : _categoryOptions.first;
+    _fundOptions = _buildOptions(_sourceOfFunds, _baseFundOptions);
+    _categoryOptions = _buildOptions(_category, _baseCategoryOptions);
+    _editSourceOfFunds = _normalizeOption(_sourceOfFunds, _fundOptions);
+    _editCategory = _normalizeOption(_category, _categoryOptions);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       for (final product in previousProducts) {
         product.dispose();
@@ -144,21 +180,35 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
     });
   }
 
+  int _unitPriceOf(HistoryProduct product) {
+  if (product.rawPrice != 0) {
+    return product.rawPrice.round();
+  }
+  return _parsePrice(product.price);
+}
+
+  int _subtotalOf(HistoryProduct product) {
+    final qty = product.quantity > 0 ? product.quantity : 1;
+    return _unitPriceOf(product) * qty;
+  }
+
+  int get _totalAmountInt {
+    return _products.fold<int>(
+      0,
+      (sum, product) => sum + _subtotalOf(product),
+    );
+  }
+
+  String get _formattedTotal => _formatPrice(_totalAmountInt);
+
   HistoryDetailedResult get _result => HistoryDetailedResult(
         merchant: _merchant,
         products: _products,
         total: _formattedTotal,
         sourceOfFunds: _sourceOfFunds,
         category: _category,
+        note: _note,
       );
-
-  String get _formattedTotal {
-    final total = _products.fold<int>(
-      0,
-      (sum, product) => sum + (_parsePrice(product.price) * product.quantity),
-    );
-    return _formatPrice(total);
-  }
 
   Future<void> _startEditing() async {
     _hideBannerTimer?.cancel();
@@ -188,7 +238,7 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
   }
 
   void _removeEditableProduct(int index) {
-    if (_editableProducts.length == 1) return;
+    if (_editableProducts.length <= 1) return;
     final removed = _editableProducts.removeAt(index);
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) => removed.dispose());
@@ -206,27 +256,44 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
     });
   }
 
-  void _saveEdits() {
-    final products = _editableProducts
-        .where((product) => product.name.text.trim().isNotEmpty)
-        .map(
-          (product) => HistoryProduct(
-            name: product.name.text.trim(),
-            price: _formatPrice(_parsePrice(product.price.text)),
-            quantity: int.tryParse(product.quantity.text) ?? 1,
-          ),
-        )
-        .toList();
+  Future<void> _saveEdits() async {
+    final products = <HistoryProduct>[];
+    for (var i = 0; i < _editableProducts.length; i++) {
+      final product = _editableProducts[i];
+      final nameText = product.name.text.trim();
+      final unitPrice = _parsePrice(product.price.text);
+      final qty = (int.tryParse(product.quantity.text.trim()) ?? 1)
+          .clamp(1, 999999);
+
+      if (nameText.isEmpty && unitPrice == 0 && _editableProducts.length > 1) {
+        continue;
+      }
+
+      products.add(
+        HistoryProduct(
+          name: nameText.isEmpty ? 'Item ${i + 1}' : nameText,
+          price: _formatPrice(unitPrice),
+          rawPrice: unitPrice.toDouble(),
+          quantity: qty,
+        ),
+      );
+    }
 
     setState(() {
       _merchant = _merchantController.text.trim().isEmpty
           ? _merchant
           : _merchantController.text.trim();
-      _products = products.isEmpty ? _products : products;
+      if (products.isNotEmpty) {
+        _products = products;
+      }
       _sourceOfFunds = _editSourceOfFunds;
       _category = _editCategory;
+      _note = _noteController.text.trim();
       _editing = false;
     });
+
+    await widget.onResult?.call(_result);
+    if (!mounted) return;
     _showFeedbackBanner('Your changes have been saved');
   }
 
@@ -240,7 +307,10 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
       primaryReturnsTrue: false,
     );
     if (delete == true && mounted) {
-      Navigator.of(context).pop(_result.copyWith(deleted: true));
+      final deletedResult = _result.copyWith(deleted: true);
+      await widget.onResult?.call(deletedResult);
+      if (!mounted) return;
+      Navigator.of(context).pop(deletedResult);
     }
   }
 
@@ -325,9 +395,9 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
     );
   }
 
-  void _handleBack() {
+  Future<void> _handleBack() async {
     if (_editing) {
-      setState(() => _editing = false);
+      await _cancelEditing();
     } else {
       Navigator.of(context).pop(_result);
     }
@@ -350,159 +420,275 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
         body: LayoutBuilder(
           builder: (context, constraints) {
             final bottomInset = MediaQuery.paddingOf(context).bottom;
-            final pageHeight =
-                constraints.maxHeight < 900 ? 900.0 : constraints.maxHeight;
             final contentWidth =
                 (constraints.maxWidth - 50).clamp(0.0, 440.0).toDouble();
             final contentLeft = (constraints.maxWidth - contentWidth) / 2;
             final tileGap = contentWidth >= 355 ? 25.0 : 16.0;
             final tileWidth = (contentWidth - tileGap) / 2;
 
-            return SingleChildScrollView(
-              child: SizedBox(
-                width: constraints.maxWidth,
-                height: pageHeight,
-                child: Stack(
-                  clipBehavior: Clip.hardEdge,
-                  children: [
-                    Positioned(
-                      left: constraints.maxWidth * 0.45,
-                      top: -34,
-                      child: Container(
-                        width: constraints.maxWidth * 0.7,
-                        height: constraints.maxWidth * 0.7,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            center: Alignment.center,
-                            radius: 0.5,
-                            colors: [
-                              Color(0xFFFFEC5C),
-                              Color(0x00FFEC5C),
-                            ],
-                            stops: [0.0, 1.0],
+            return Stack(
+              children: [
+                // Ambient gradient orbs & subtle overlay
+                Positioned(
+                  left: constraints.maxWidth * 0.45,
+                  top: -34,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: constraints.maxWidth * 0.7,
+                      height: constraints.maxWidth * 0.7,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          center: Alignment.center,
+                          radius: 0.5,
+                          colors: [
+                            Color(0xFFFFEC5C),
+                            Color(0x00FFEC5C),
+                          ],
+                          stops: [0.0, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: constraints.maxWidth * 0.05,
+                  top: -9,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: constraints.maxWidth * 0.7,
+                      height: constraints.maxWidth * 0.7,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          center: Alignment.center,
+                          radius: 0.5,
+                          colors: [
+                            Color(0xFFFFB357),
+                            Color(0x00FFB357),
+                          ],
+                          stops: [0.0, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  left: -constraints.maxWidth * 0.2,
+                  top: -63,
+                  child: IgnorePointer(
+                    child: Container(
+                      width: constraints.maxWidth * 0.7,
+                      height: constraints.maxWidth * 0.7,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        gradient: RadialGradient(
+                          center: Alignment.center,
+                          radius: 0.5,
+                          colors: [
+                            Color(0xFFB696E3),
+                            Color(0x00B696E3),
+                          ],
+                          stops: [0.0, 1.0],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(
+                      color: Color(0x55F8F8F8),
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: -63,
+                  bottom: 0,
+                  left: (constraints.maxWidth - 578) / 2,
+                  width: 578,
+                  child: IgnorePointer(
+                    child: SvgPicture.asset(
+                      'assets/58487.svg',
+                      width: 578,
+                      fit: BoxFit.fill,
+                    ),
+                  ),
+                ),
+
+                // Scrollable content area
+                SingleChildScrollView(
+                  padding: EdgeInsets.only(
+                    top: 40,
+                    bottom: 120 + bottomInset,
+                  ),
+                  child: Center(
+                    child: SizedBox(
+                      width: contentWidth,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: InkWell(
+                              onTap: _handleBack,
+                              child: SizedBox(
+                                width: 30,
+                                height: 40,
+                                child: Align(
+                                  alignment: Alignment.centerLeft,
+                                  child: SvgPicture.asset(
+                                    'assets/icons/back.svg',
+                                    width: 22,
+                                    height: 17,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: constraints.maxWidth * 0.05,
-                      top: -9,
-                      child: Container(
-                        width: constraints.maxWidth * 0.7,
-                        height: constraints.maxWidth * 0.7,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            center: Alignment.center,
-                            radius: 0.5,
-                            colors: [
-                              Color(0xFFFFB357),
-                              Color(0x00FFB357),
-                            ],
-                            stops: [0.0, 1.0],
+                          const SizedBox(height: 10),
+                          if (!_editing)
+                            Text(
+                              _merchant,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: _titleStyle,
+                            )
+                          else
+                            Center(
+                              child: SizedBox(
+                                width: tileWidth.clamp(160.0, 260.0),
+                                height: 34,
+                                child: _CompactTextField(
+                                  controller: _merchantController,
+                                  textAlign: TextAlign.center,
+                                  style: _titleStyle,
+                                ),
+                              ),
+                            ),
+                          const SizedBox(height: 12),
+                          _ReceiptImageBox(
+                            width: contentWidth,
+                            asset: widget.receiptAsset,
+                            bytes: widget.receiptBytes,
                           ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      left: -constraints.maxWidth * 0.2,
-                      top: -63,
-                      child: Container(
-                        width: constraints.maxWidth * 0.7,
-                        height: constraints.maxWidth * 0.7,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: RadialGradient(
-                            center: Alignment.center,
-                            radius: 0.5,
-                            colors: [
-                              Color(0xFFB696E3),
-                              Color(0x00B696E3),
-                            ],
-                            stops: [0.0, 1.0],
+                          const SizedBox(height: 12),
+                          Text(
+                            widget.dateTime,
+                            textAlign: TextAlign.center,
+                            style: _regularStyle,
                           ),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      width: constraints.maxWidth,
-                      height: pageHeight,
-                      child: const IgnorePointer(
-                        child: ColoredBox(
-                          color: Color(0x55F8F8F8),
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      top: -63,
-                      left: (constraints.maxWidth - 578) / 2,
-                      child: SvgPicture.asset(
-                        'assets/58487.svg',
-                        width: 578,
-                        height: pageHeight + 63,
-                        fit: BoxFit.fill,
-                      ),
-                    ),
-                    _BackButton(left: contentLeft, onPressed: _handleBack),
-                    if (!_editing) ...[
-                      Positioned(
-                        top: 90,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Text(
-                          _merchant,
-                          textAlign: TextAlign.center,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: _titleStyle,
-                        ),
-                      ),
-                      _ReceiptImage(
-                        top: 120,
-                        left: contentLeft,
-                        width: contentWidth,
-                        asset: widget.receiptAsset,
-                        bytes: widget.receiptBytes,
-                      ),
-                      Positioned(
-                        top: 325,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Text(
-                          widget.dateTime,
-                          textAlign: TextAlign.center,
-                          style: _regularStyle,
-                        ),
-                      ),
-                      Positioned(
-                        top: 368,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Column(
-                          children: [
+                          // Keterangan tanggal struk tepat di bawah baris tanggal input struk
+                          if (!_editing) ...[
+                            if (_note.trim().isNotEmpty) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                _note.trim(),
+                                textAlign: TextAlign.center,
+                                style: _regularStyle.copyWith(
+                                  fontSize: 13,
+                                  color: const Color(0xFF555555),
+                                ),
+                              ),
+                            ],
+                          ] else ...[
+                            const SizedBox(height: 6),
+                            Center(
+                              child: SizedBox(
+                                width: (contentWidth * 0.78).clamp(180.0, 320.0),
+                                height: 28,
+                                child: _CompactTextField(
+                                  controller: _noteController,
+                                  textAlign: TextAlign.center,
+                                  style: _regularStyle.copyWith(fontSize: 13),
+                                ),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 18),
+                          if (!_editing) ...[
                             _ProductsSection(
                               products: _products,
                               total: _formattedTotal,
+                              unitPriceOf: _unitPriceOf,
+                              subtotalOf: _subtotalOf,
                             ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 14),
                             _DetailSection(
                               title: 'Source of funds',
                               value: _sourceOfFunds,
                             ),
-                            const SizedBox(height: 10),
+                            const SizedBox(height: 14),
                             _DetailSection(
                               title: 'Category',
                               value: _category,
                             ),
+                          ] else ...[
+                            const _SectionHeader(title: 'Products'),
+                            const SizedBox(height: 6),
+                            for (var index = 0;
+                                index < _editableProducts.length;
+                                index++)
+                              _EditableProductRow(
+                                product: _editableProducts[index],
+                                contentWidth: contentWidth,
+                                tileGap: tileGap,
+                                tileWidth: tileWidth,
+                                onRemove: () => _removeEditableProduct(index),
+                              ),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 4, bottom: 6),
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: _AssetIconButton(
+                                  asset: 'assets/icons/add.svg',
+                                  onPressed: _addEditableProduct,
+                                ),
+                              ),
+                            ),
+                            const _TotalRow(),
+                            const SizedBox(height: 14),
+                            const _SectionHeader(title: 'Source of funds'),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(5, 6, 5, 12),
+                              child: _CompactDropdown(
+                                value: _editSourceOfFunds,
+                                options: _fundOptions,
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    setState(() => _editSourceOfFunds = value);
+                                  }
+                                },
+                              ),
+                            ),
+                            const _SectionHeader(title: 'Category'),
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(5, 6, 5, 0),
+                              child: _CompactDropdown(
+                                value: _editCategory,
+                                options: _categoryOptions,
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    setState(() => _editCategory = value);
+                                  }
+                                },
+                              ),
+                            ),
                           ],
-                        ),
+                        ],
                       ),
-                      Positioned(
-                        top: pageHeight - 100 - bottomInset,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Row(
+                    ),
+                  ),
+                ),
+
+                // Tombol aksi tetap di bagian bawah dengan desain asli
+                Positioned(
+                  left: contentLeft,
+                  width: contentWidth,
+                  bottom: 24 + bottomInset,
+                  child: !_editing
+                      ? Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _PillButton(
@@ -521,107 +707,8 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
                               onPressed: _deleteReceipt,
                             ),
                           ],
-                        ),
-                      ),
-                    ] else ...[
-                      Positioned(
-                        top: 85,
-                        left: contentLeft,
-                        width: contentWidth,
-                        height: 30,
-                        child: Center(
-                          child: SizedBox(
-                            width: tileWidth,
-                            height: 30,
-                            child: _CompactTextField(
-                              controller: _merchantController,
-                              textAlign: TextAlign.center,
-                              style: _titleStyle,
-                            ),
-                          ),
-                        ),
-                      ),
-                      _ReceiptImage(
-                        top: 120,
-                        left: contentLeft,
-                        width: contentWidth,
-                        asset: widget.receiptAsset,
-                        bytes: widget.receiptBytes,
-                      ),
-                      Positioned(
-                        top: 325,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Text(
-                          widget.dateTime,
-                          textAlign: TextAlign.center,
-                          style: _regularStyle,
-                        ),
-                      ),
-                      Positioned(
-                        top: 368,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Column(
-                          children: [
-                            const _SectionHeader(title: 'Products'),
-                            const SizedBox(height: 5),
-                            for (var index = 0;
-                                index < _editableProducts.length;
-                                index++)
-                              _EditableProductRow(
-                                product: _editableProducts[index],
-                                contentWidth: contentWidth,
-                                tileGap: tileGap,
-                                tileWidth: tileWidth,
-                                onRemove: () => _removeEditableProduct(index),
-                              ),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 3, bottom: 5),
-                              child: Align(
-                                alignment: Alignment.centerRight,
-                                child: _AssetIconButton(
-                                  asset: 'assets/icons/add.svg',
-                                  onPressed: _addEditableProduct,
-                                ),
-                              ),
-                            ),
-                            const _TotalRow(),
-                            const SizedBox(height: 10),
-                            const _SectionHeader(title: 'Source of funds'),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(5, 5, 5, 10),
-                              child: _CompactDropdown(
-                                value: _editSourceOfFunds,
-                                options: _fundOptions,
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _editSourceOfFunds = value);
-                                  }
-                                },
-                              ),
-                            ),
-                            const _SectionHeader(title: 'Category'),
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
-                              child: _CompactDropdown(
-                                value: _editCategory,
-                                options: _categoryOptions,
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _editCategory = value);
-                                  }
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Positioned(
-                        top: pageHeight - 100 - bottomInset,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: Row(
+                        )
+                      : Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             _PillButton(
@@ -639,51 +726,162 @@ class _HistoryDetailedScreenState extends State<HistoryDetailedScreen> {
                             ),
                           ],
                         ),
-                      ),
-                    ],
-                    Positioned(
-                      left: contentLeft,
-                      width: contentWidth,
-                      top: pageHeight - 50 - bottomInset,
-                      height: 50 + bottomInset,
-                      child: const IgnorePointer(
-                        child: ColoredBox(
-                          color: Color.fromRGBO(248, 248, 248, 0.5),
-                        ),
-                      ),
-                    ),
-                    if (_bannerMounted)
-                      Positioned(
-                        top: 40,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: IgnorePointer(
-                          ignoring: !_bannerVisible,
-                          child: AnimatedOpacity(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeOut,
-                            opacity: _bannerVisible ? 1.0 : 0.0,
-                            child: AnimatedSlide(
-                              duration: const Duration(milliseconds: 350),
-                              curve: _bannerVisible
-                                  ? Curves.easeOutCubic
-                                  : Curves.easeInCubic,
-                              offset: _bannerVisible
-                                  ? Offset.zero
-                                  : const Offset(0, -1.6),
-                              child: _SuccessBanner(
-                                message: _bannerMessage,
-                                width: contentWidth,
-                              ),
-                            ),
+                ),
+
+                if (_bannerMounted)
+                  Positioned(
+                    top: 40,
+                    left: contentLeft,
+                    width: contentWidth,
+                    child: IgnorePointer(
+                      ignoring: !_bannerVisible,
+                      child: AnimatedOpacity(
+                        duration: const Duration(milliseconds: 300),
+                        curve: Curves.easeOut,
+                        opacity: _bannerVisible ? 1.0 : 0.0,
+                        child: AnimatedSlide(
+                          duration: const Duration(milliseconds: 350),
+                          curve: _bannerVisible
+                              ? Curves.easeOutCubic
+                              : Curves.easeInCubic,
+                          offset: _bannerVisible
+                              ? Offset.zero
+                              : const Offset(0, -1.6),
+                          child: _SuccessBanner(
+                            message: _bannerMessage,
+                            width: contentWidth,
                           ),
                         ),
                       ),
-                  ],
-                ),
-              ),
+                    ),
+                  ),
+              ],
             );
           },
+        ),
+      ),
+    );
+  }
+}
+
+class _ReceiptImageBox extends StatelessWidget {
+  const _ReceiptImageBox({
+    required this.width,
+    required this.asset,
+    required this.bytes,
+  });
+
+  final double width;
+  final String? asset;
+  final Uint8List? bytes;
+
+  Widget? _buildImage({BoxFit fit = BoxFit.cover}) {
+    if (bytes != null) {
+      return Image.memory(bytes!, fit: fit);
+    }
+    if (asset != null && asset!.isNotEmpty) {
+      final file = File(asset!);
+      return file.existsSync()
+          ? Image.file(file, fit: fit)
+          : Image.asset(asset!, fit: fit);
+    }
+    return null;
+  }
+
+  void _openZoomDialog(BuildContext context) {
+    final fullImage = _buildImage(fit: BoxFit.contain);
+    if (fullImage == null) return;
+
+    showGeneralDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Receipt Zoom',
+      barrierColor: Colors.black.withValues(alpha: 0.85),
+      transitionDuration: const Duration(milliseconds: 200),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        return SafeArea(
+          child: Material(
+            color: Colors.transparent,
+            child: Stack(
+              children: [
+                Positioned.fill(
+                  child: InteractiveViewer(
+                    minScale: 1.0,
+                    maxScale: 4.5,
+                    child: Center(child: fullImage),
+                  ),
+                ),
+                Positioned(
+                  top: 16,
+                  right: 16,
+                  child: InkWell(
+                    onTap: () => Navigator.of(dialogContext).pop(),
+                    customBorder: const CircleBorder(),
+                    child: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.55),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white24),
+                      ),
+                      child: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 22,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbnail = _buildImage(fit: BoxFit.cover);
+    final hasImage = thumbnail != null;
+
+    return Center(
+      child: SizedBox(
+        width: width.clamp(0.0, 300.0).toDouble(),
+        height: 200,
+        child: Material(
+          color: const Color(0xFFF8F8F8),
+          borderRadius: BorderRadius.circular(20),
+          clipBehavior: Clip.antiAlias,
+          child: InkWell(
+            onTap: hasImage ? () => _openZoomDialog(context) : null,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                if (thumbnail != null) thumbnail,
+                if (hasImage)
+                  Positioned(
+                    right: 10,
+                    bottom: 10,
+                    child: IgnorePointer(
+                      child: Container(
+                        padding: const EdgeInsets.all(6),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.zoom_in,
+                          color: Colors.white,
+                          size: 18,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -725,16 +923,21 @@ class _EditableProductRow extends StatelessWidget {
             child: _CompactTextField(controller: product.name),
           ),
           Positioned(
-            left: 5,
-            width: priceWidth,
-            top: 27,
-            height: 25,
-            child: _CompactTextField(
-              controller: product.price,
-              keyboardType: TextInputType.number,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-            ),
-          ),
+  left: 5,
+  width: priceWidth,
+  top: 27,
+  height: 25,
+  child: _CompactTextField(
+    controller: product.price,
+    keyboardType: const TextInputType.numberWithOptions(
+      signed: true,
+      decimal: false,
+    ),
+    inputFormatters: [
+      FilteringTextInputFormatter.allow(RegExp(r'^-?[0-9.]*')),
+    ],
+  ),
+),
           Positioned(
             left: qtyLeft,
             width: qtyWidth,
@@ -754,11 +957,21 @@ class _EditableProductRow extends StatelessWidget {
             width: subtotalWidth,
             child: ValueListenableBuilder<TextEditingValue>(
               valueListenable: product.price,
-              builder: (context, value, child) => Text(
-                _formatPrice(_parsePrice(value.text)),
-                textAlign: TextAlign.right,
-                style: _regularStyle,
-              ),
+              builder: (context, priceValue, _) {
+                return ValueListenableBuilder<TextEditingValue>(
+                  valueListenable: product.quantity,
+                  builder: (context, qtyValue, _) {
+                    final unit = _parsePrice(priceValue.text);
+                    final qty = (int.tryParse(qtyValue.text.trim()) ?? 1)
+                        .clamp(1, 999999);
+                    return Text(
+                      _formatPrice(unit * qty),
+                      textAlign: TextAlign.right,
+                      style: _regularStyle,
+                    );
+                  },
+                );
+              },
             ),
           ),
           Positioned(
@@ -776,10 +989,17 @@ class _EditableProductRow extends StatelessWidget {
 }
 
 class _ProductsSection extends StatelessWidget {
-  const _ProductsSection({required this.products, required this.total});
+  const _ProductsSection({
+    required this.products,
+    required this.total,
+    required this.unitPriceOf,
+    required this.subtotalOf,
+  });
 
   final List<HistoryProduct> products;
   final String total;
+  final int Function(HistoryProduct) unitPriceOf;
+  final int Function(HistoryProduct) subtotalOf;
 
   @override
   Widget build(BuildContext context) {
@@ -797,7 +1017,9 @@ class _ProductsSection extends StatelessWidget {
                     children: [
                       Expanded(
                         child: Text(
-                          '${product.name}\n${_plainPrice(product.price)}',
+                          '${product.name}\n${_formatPrice(unitPriceOf(product))}',
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                           style: _regularStyle,
                         ),
                       ),
@@ -812,7 +1034,7 @@ class _ProductsSection extends StatelessWidget {
                       SizedBox(
                         width: 90,
                         child: Text(
-                          '\n${product.price}',
+                          '\n${_formatPrice(subtotalOf(product))}',
                           textAlign: TextAlign.right,
                           style: _regularStyle,
                         ),
@@ -873,23 +1095,21 @@ class _DetailSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 60,
-      child: Column(
-        children: [
-          _SectionHeader(title: title),
-          SizedBox(
-            height: 30,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Padding(
-                padding: const EdgeInsets.only(left: 5),
-                child: Text(value, style: _regularStyle),
-              ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _SectionHeader(title: title),
+        SizedBox(
+          height: 30,
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Padding(
+              padding: const EdgeInsets.only(left: 5),
+              child: Text(value, style: _regularStyle),
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
@@ -974,10 +1194,12 @@ class _CompactDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final safeValue = options.contains(value) ? value : options.first;
+
     return SizedBox(
       height: 25,
       child: DropdownButtonFormField<String>(
-        initialValue: value,
+        initialValue: safeValue,
         isExpanded: true,
         iconSize: 10,
         icon: SvgPicture.asset(
@@ -999,80 +1221,6 @@ class _CompactDropdown extends StatelessWidget {
             DropdownMenuItem(value: option, child: Text(option)),
         ],
         onChanged: onChanged,
-      ),
-    );
-  }
-}
-
-class _BackButton extends StatelessWidget {
-  const _BackButton({required this.left, required this.onPressed});
-
-  final double left;
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 40,
-      left: left,
-      child: InkWell(
-        onTap: onPressed,
-        child: SizedBox(
-          width: 30,
-          height: 40,
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: SvgPicture.asset(
-              'assets/icons/back.svg',
-              width: 22,
-              height: 17,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ReceiptImage extends StatelessWidget {
-  const _ReceiptImage({
-    required this.top,
-    required this.left,
-    required this.width,
-    required this.asset,
-    required this.bytes,
-  });
-
-  final double top;
-  final double left;
-  final double width;
-  final String? asset;
-  final Uint8List? bytes;
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: top,
-      left: left,
-      width: width,
-      height: 200,
-      child: Center(
-        child: SizedBox(
-          width: width.clamp(0.0, 300.0).toDouble(),
-          height: 200,
-          child: Container(
-            clipBehavior: Clip.antiAlias,
-            decoration: BoxDecoration(
-              color: const Color(0xFFF8F8F8),
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: bytes != null
-                ? Image.memory(bytes!, fit: BoxFit.cover)
-                : asset == null
-                    ? null
-                    : Image.asset(asset!, fit: BoxFit.cover),
-          ),
-        ),
       ),
     );
   }
@@ -1240,11 +1388,13 @@ class HistoryProduct {
   const HistoryProduct({
     required this.name,
     required this.price,
+    this.rawPrice = 0,
     this.quantity = 1,
   });
 
   final String name;
   final String price;
+  final double rawPrice;
   final int quantity;
 }
 
@@ -1255,6 +1405,7 @@ class HistoryDetailedResult {
     required this.total,
     required this.sourceOfFunds,
     required this.category,
+    this.note = '',
     this.deleted = false,
   });
 
@@ -1263,6 +1414,7 @@ class HistoryDetailedResult {
   final String total;
   final String sourceOfFunds;
   final String category;
+  final String note;
   final bool deleted;
 
   HistoryDetailedResult copyWith({bool? deleted}) {
@@ -1272,6 +1424,7 @@ class HistoryDetailedResult {
       total: total,
       sourceOfFunds: sourceOfFunds,
       category: category,
+      note: note,
       deleted: deleted ?? this.deleted,
     );
   }
@@ -1285,10 +1438,14 @@ class _EditableProduct {
   });
 
   factory _EditableProduct.fromProduct(HistoryProduct product) {
+    final unit = product.rawPrice > 0
+        ? product.rawPrice.round()
+        : _parsePrice(product.price);
+    final qty = product.quantity > 0 ? product.quantity : 1;
     return _EditableProduct(
       name: TextEditingController(text: product.name),
-      price: TextEditingController(text: _plainPrice(product.price)),
-      quantity: TextEditingController(text: product.quantity.toString()),
+      price: TextEditingController(text: unit.toString()),
+      quantity: TextEditingController(text: qty.toString()),
     );
   }
 
@@ -1304,19 +1461,24 @@ class _EditableProduct {
 }
 
 int _parsePrice(String value) {
-  return int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return 0;
+  final isNegative = trimmed.startsWith('-') ||
+      (trimmed.startsWith('(') && trimmed.endsWith(')'));
+  final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+  final parsed = int.tryParse(digits) ?? 0;
+  return isNegative ? -parsed : parsed;
 }
 
-String _plainPrice(String value) => _parsePrice(value).toString();
-
 String _formatPrice(int value) {
-  final digits = value.toString();
+  final isNegative = value < 0;
+  final digits = value.abs().toString();
   final buffer = StringBuffer();
   for (var index = 0; index < digits.length; index++) {
     if (index > 0 && (digits.length - index) % 3 == 0) buffer.write('.');
     buffer.write(digits[index]);
   }
-  return 'Rp$buffer';
+  return isNegative ? '-Rp$buffer' : 'Rp$buffer';
 }
 
 const _inputBorder = OutlineInputBorder(
@@ -1329,7 +1491,7 @@ const _titleStyle = TextStyle(
   fontFamily: 'Bricolage Grotesque',
   fontSize: 25,
   fontWeight: FontWeight.w600,
-  height: 0.8,
+  height: 1.1,
 );
 
 const _regularStyle = TextStyle(

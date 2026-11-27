@@ -25,7 +25,18 @@ class HistoryDetailFeaturePage extends StatelessWidget {
       total: _controller.formatRupiah(receipt.totalAmount),
       sourceOfFunds: receipt.sourceOfFunds,
       category: receipt.category,
+      note: receipt.note,
       receiptAsset: receipt.imagePath,
+      onResult: (result) async {
+        if (result.deleted) {
+          await _controller.deleteReceiptWithImage(receipt);
+        } else {
+          await _controller.updateFromDetailResult(
+            original: receipt,
+            result: result,
+          );
+        }
+      },
     );
   }
 }
