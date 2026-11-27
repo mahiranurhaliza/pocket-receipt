@@ -1,37 +1,105 @@
-import 'dart:typed_data';
+// ignore: duplicate_ignore
+// ignore: file_names
+// ignore_for_file: file_names
+
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
+import '../database/receipt_model.dart';
 import 'historyDetailed.dart';
+
+typedef ScanSaveCallback = Future<void> Function({
+  required String merchant,
+  required List<ReceiptItem> items,
+  required String sourceOfFunds,
+  required String category,
+});
 
 class ScanDetailedScreen extends StatefulWidget {
   const ScanDetailedScreen({
     super.key,
     this.receiptBytes,
+    this.initialMerchant,
+    this.initialItems,
+    this.onSave,
   });
 
   final Uint8List? receiptBytes;
+  final String? initialMerchant;
+  final List<ReceiptItem>? initialItems;
+  final ScanSaveCallback? onSave;
 
   @override
   State<ScanDetailedScreen> createState() => _ScanDetailedScreenState();
 }
 
 class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
+  static const List<String> _fundSourceOptions = [
+    'Cash',
+    'GoPay',
+    'OVO',
+    'DANA',
+    'ShopeePay',
+    'BCA',
+    'BNI',
+    'BRI',
+    'Mandiri',
+  ];
+
+  static const List<String> _categoryOptions = [
+    'Food & Beverages',
+    'Shopping',
+    'Transport',
+    'Bills',
+    'Others',
+  ];
+
   late final TextEditingController _merchantController;
   late List<_ScanProductDraft> _products;
-  String _sourceOfFunds = 'Gopay';
-  String _category = 'Food & Beverages';
+  late String _sourceOfFunds;
+  late String _category;
+  bool _saving = false;
+
+  String _normalizeOption(String value, List<String> options) {
+    if (options.contains(value)) return value;
+    final lower = value.trim().toLowerCase();
+    for (final option in options) {
+      if (option.toLowerCase() == lower) return option;
+    }
+    return options.first;
+  }
 
   @override
   void initState() {
     super.initState();
-    _merchantController = TextEditingController(text: 'Alfamart');
-    _products = [
-      _ScanProductDraft(name: 'Mineral', price: '5000'),
-      _ScanProductDraft(name: 'Ice cream', price: '8000'),
-    ];
+    final merchantText = (widget.initialMerchant != null &&
+            widget.initialMerchant!.trim().isNotEmpty)
+        ? widget.initialMerchant!.trim()
+        : 'Alfamart';
+    _merchantController = TextEditingController(text: merchantText);
+
+    _sourceOfFunds = _normalizeOption('GoPay', _fundSourceOptions);
+    _category = _normalizeOption('Food & Beverages', _categoryOptions);
+
+    if (widget.initialItems != null && widget.initialItems!.isNotEmpty) {
+      _products = widget.initialItems!
+          .map(
+            (item) => _ScanProductDraft(
+              name: item.name,
+              price: item.price.round().toString(),
+              quantity: item.quantity > 0 ? item.quantity.toString() : '1',
+            ),
+          )
+          .toList();
+    } else {
+      _products = [
+        _ScanProductDraft(name: 'Mineral', price: '5000'),
+        _ScanProductDraft(name: 'Ice cream', price: '8000'),
+      ];
+    }
   }
 
   void _addProduct() {
@@ -45,6 +113,11 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
     final removed = _products.removeAt(index);
     setState(() {});
     WidgetsBinding.instance.addPostFrameCallback((_) => removed.dispose());
+  }
+
+  void _handleBackButton() {
+    if (_saving) return;
+    Navigator.of(context).pop();
   }
 
   Future<void> _cancelReceipt() async {
@@ -142,36 +215,84 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
     }
   }
 
-  void _saveReceipt() {
-    final products = _products
-        .where((product) => product.name.text.trim().isNotEmpty)
-        .map(
-          (product) => HistoryProduct(
-            name: product.name.text.trim(),
-            price: _formatReceiptPrice(_parseReceiptPrice(product.price.text)),
-            quantity: int.tryParse(product.quantity.text) ?? 1,
-          ),
-        )
-        .toList();
+  Future<void> _saveReceipt() async {
+    if (_saving) return;
+    setState(() => _saving = true);
 
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute<void>(
-        builder: (_) => HistoryDetailedScreen(
-          merchant: _merchantController.text.trim().isEmpty
-              ? 'Alfamart'
-              : _merchantController.text.trim(),
-          products: products.isEmpty
-              ? const [
-                  HistoryProduct(name: 'Mineral', price: 'Rp5.000'),
-                  HistoryProduct(name: 'Ice cream', price: 'Rp8.000'),
-                ]
-              : products,
+    try {
+      final merchantName = _merchantController.text.trim().isEmpty
+          ? 'Alfamart'
+          : _merchantController.text.trim();
+
+      final parsedItems = _products
+          .where((product) => product.name.text.trim().isNotEmpty)
+          .map(
+            (product) => ReceiptItem(
+              name: product.name.text.trim(),
+              quantity: (int.tryParse(product.quantity.text) ?? 1) > 0
+                  ? (int.tryParse(product.quantity.text) ?? 1)
+                  : 1,
+              price: _parseReceiptPrice(product.price.text).toDouble(),
+            ),
+          )
+          .toList();
+
+      final effectiveItems = parsedItems.isEmpty
+          ? [
+              ReceiptItem(
+                name: merchantName,
+                quantity: 1,
+                price: _products
+                    .fold<int>(
+                      0,
+                      (sum, p) =>
+                          sum +
+                          (_parseReceiptPrice(p.price.text) *
+                              (int.tryParse(p.quantity.text) ?? 1)),
+                    )
+                    .toDouble(),
+              ),
+            ]
+          : parsedItems;
+
+      if (widget.onSave != null) {
+        await widget.onSave!(
+          merchant: merchantName,
+          items: effectiveItems,
           sourceOfFunds: _sourceOfFunds,
           category: _category,
-          receiptBytes: widget.receiptBytes,
+        );
+        return;
+      }
+
+      if (!mounted) return;
+      final historyProducts = effectiveItems
+          .map(
+            (item) => HistoryProduct(
+              name: item.name,
+              price: _formatReceiptPrice(item.price.round()),
+              rawPrice: item.price,
+              quantity: item.quantity,
+            ),
+          )
+          .toList();
+
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute<void>(
+          builder: (_) => HistoryDetailedScreen(
+            merchant: merchantName,
+            products: historyProducts,
+            sourceOfFunds: _sourceOfFunds,
+            category: _category,
+            receiptBytes: widget.receiptBytes,
+          ),
         ),
-      ),
-    );
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _saving = false);
+      }
+    }
   }
 
   @override
@@ -185,60 +306,67 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final safeSource = _normalizeOption(_sourceOfFunds, _fundSourceOptions);
+    final safeCategory = _normalizeOption(_category, _categoryOptions);
+
     return Scaffold(
       backgroundColor: const Color(0xFF1E1E1E),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final pageHeight = constraints.maxHeight < 900
-              ? 900.0
-              : constraints.maxHeight;
           final contentWidth =
-              (constraints.maxWidth - 50).clamp(0.0, 440.0).toDouble();
-          final contentLeft = (constraints.maxWidth - contentWidth) / 2;
-          final tileGap = contentWidth >= 355 ? 25.0 : 16.0;
+              (constraints.maxWidth - 40).clamp(0.0, 460.0).toDouble();
+          final tileGap = contentWidth >= 355 ? 20.0 : 14.0;
           final tileWidth = (contentWidth - tileGap) / 2;
 
-          return SingleChildScrollView(
-            child: SizedBox(
-              width: constraints.maxWidth,
-              height: pageHeight,
-              child: Stack(
-                clipBehavior: Clip.hardEdge,
-                children: [
-                  if (widget.receiptBytes != null)
-                    Positioned(
-                      width: constraints.maxWidth,
-                      height: pageHeight,
-                      child: Image.memory(widget.receiptBytes!, fit: BoxFit.cover),
-                    ),
-                  Positioned(
-                    top: 0,
-                    width: constraints.maxWidth,
-                    child: SvgPicture.asset(
-                      'assets/cover/header.svg',
-                      width: contentWidth,
-                      height: 150,
-                      fit: BoxFit.fill,
-                      placeholderBuilder: (_) => _HeaderGradientFallback(
-                        width: contentWidth,
-                        height: 150,
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: widget.receiptBytes != null
+                    ? InteractiveViewer(
+                        minScale: 1.0,
+                        maxScale: 3.5,
+                        child: Center(
+                          child: Image.memory(
+                            widget.receiptBytes!,
+                            fit: BoxFit.contain,
+                            width: constraints.maxWidth,
+                            height: constraints.maxHeight,
+                          ),
+                        ),
+                      )
+                    : Container(
+                        color: const Color(0xFF2A2A2A),
+                        alignment: Alignment.center,
+                        child: const Text(
+                          'Preview Struk',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontFamily: 'Bricolage Grotesque',
+                            fontSize: 16,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 40,
-                    left: contentLeft + 5,
-                    child: SizedBox(
-                      width: 30,
-                      height: 40,
-                      child: InkWell(
-                        onTap: _cancelReceipt,
-                        child: Align(
-                          alignment: Alignment.centerLeft,
+              ),
+              Positioned(
+                top: 40,
+                left: 20,
+                child: SafeArea(
+                  top: false,
+                  child: Material(
+                    color: const Color(0xCCFFFFFF),
+                    shape: const CircleBorder(),
+                    elevation: 2,
+                    child: InkWell(
+                      onTap: _handleBackButton,
+                      customBorder: const CircleBorder(),
+                      child: SizedBox(
+                        width: 40,
+                        height: 40,
+                        child: Center(
                           child: SvgPicture.asset(
                             'assets/icons/back.svg',
-                            width: 22,
-                            height: 17,
+                            width: 20,
+                            height: 16,
                             placeholderBuilder: (_) => const Icon(
                               Icons.arrow_back,
                               size: 20,
@@ -249,45 +377,61 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
                       ),
                     ),
                   ),
-                  Positioned(
-                    top: 250,
-                    width: constraints.maxWidth,
-                    height: pageHeight - 250,
-                    child: SvgPicture.asset(
-                      'assets/cover/bg-2.svg',
-                      width: contentWidth,
-                      height: pageHeight - 250,
-                      fit: BoxFit.fill,
-                      placeholderBuilder: (_) => Container(
-                        width: contentWidth,
-                        height: pageHeight - 250,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFF4F4F4),
-                          borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(48),
+                ),
+              ),
+              DraggableScrollableSheet(
+                initialChildSize: 0.62,
+                minChildSize: 0.16,
+                maxChildSize: 0.92,
+                snap: true,
+                snapSizes: const [0.16, 0.62, 0.92],
+                builder: (context, scrollController) {
+                  return Container(
+                    decoration: const BoxDecoration(
+                      color: Color(0xFFF4F4F4),
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(36),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Color(0x29000000),
+                          blurRadius: 18,
+                          offset: Offset(0, -4),
+                        ),
+                      ],
+                    ),
+                    child: ListView(
+                      controller: scrollController,
+                      padding: EdgeInsets.fromLTRB(
+                        (constraints.maxWidth - contentWidth) / 2,
+                        10,
+                        (constraints.maxWidth - contentWidth) / 2,
+                        32,
+                      ),
+                      children: [
+                        Center(
+                          child: Container(
+                            width: 44,
+                            height: 5,
+                            margin: const EdgeInsets.only(bottom: 14),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFBDBDBD),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    top: 300,
-                    left: contentLeft,
-                    width: contentWidth,
-                    child: Column(
-                      children: [
                         SizedBox(
-                          width: tileWidth,
-                          height: 30,
+                          width: contentWidth,
+                          height: 42,
                           child: _ReceiptTextField(
                             controller: _merchantController,
                             textAlign: TextAlign.center,
                             style: _receiptTitleStyle,
                           ),
                         ),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 14),
                         const _ReceiptSectionHeader(title: 'Products'),
-                        const SizedBox(height: 5),
+                        const SizedBox(height: 8),
                         for (var index = 0; index < _products.length; index++)
                           _ScanProductRow(
                             product: _products[index],
@@ -296,7 +440,7 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
                             onRemove: () => _removeProduct(index),
                           ),
                         Padding(
-                          padding: const EdgeInsets.only(top: 3, bottom: 5),
+                          padding: const EdgeInsets.only(top: 6, bottom: 8),
                           child: Align(
                             alignment: Alignment.centerRight,
                             child: _ReceiptAssetButton(
@@ -308,18 +452,13 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
                           ),
                         ),
                         _ReceiptTotal(products: _products),
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 14),
                         const _ReceiptSectionHeader(title: 'Source of funds'),
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(5, 5, 5, 10),
+                          padding: const EdgeInsets.fromLTRB(5, 8, 5, 14),
                           child: _ReceiptDropdown(
-                            value: _sourceOfFunds,
-                            options: const [
-                              'Gopay',
-                              'BNI',
-                              'Shopeepay',
-                              'Cash',
-                            ],
+                            value: safeSource,
+                            options: _fundSourceOptions,
                             onChanged: (value) {
                               setState(() => _sourceOfFunds = value);
                             },
@@ -327,101 +466,41 @@ class _ScanDetailedScreenState extends State<ScanDetailedScreen> {
                         ),
                         const _ReceiptSectionHeader(title: 'Category'),
                         Padding(
-                          padding: const EdgeInsets.fromLTRB(5, 5, 5, 0),
+                          padding: const EdgeInsets.fromLTRB(5, 8, 5, 22),
                           child: _ReceiptDropdown(
-                            value: _category,
-                            options: const [
-                              'Food & Beverages',
-                              'Shopping',
-                              'Transport',
-                              'Bills',
-                            ],
+                            value: safeCategory,
+                            options: _categoryOptions,
                             onChanged: (value) {
                               setState(() => _category = value);
                             },
                           ),
                         ),
-                      ],
-                    ),
-                  ),
-                  Positioned(
-                    top: pageHeight - 100,
-                    left: contentLeft,
-                    width: contentWidth,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        _ReceiptButton(
-                          label: 'Cancel',
-                          fill: const Color.fromRGBO(235, 93, 93, 0.5),
-                          border: const Color(0xFFE42525),
-                          onPressed: _cancelReceipt,
-                        ),
-                        SizedBox(width: tileGap),
-                        _ReceiptButton(
-                          label: 'Save',
-                          fill: const Color.fromRGBO(59, 178, 115, 0.5),
-                          border: const Color(0xFF05922B),
-                          onPressed: _saveReceipt,
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _ReceiptButton(
+                              label: 'Cancel',
+                              fill: const Color.fromRGBO(235, 93, 93, 0.5),
+                              border: const Color(0xFFE42525),
+                              onPressed: _cancelReceipt,
+                            ),
+                            SizedBox(width: tileGap),
+                            _ReceiptButton(
+                              label: _saving ? 'Saving...' : 'Save',
+                              fill: const Color.fromRGBO(59, 178, 115, 0.5),
+                              border: const Color(0xFF05922B),
+                              onPressed: _saving ? () {} : _saveReceipt,
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ),
-                ],
+                  );
+                },
               ),
-            ),
+            ],
           );
         },
-      ),
-    );
-  }
-}
-
-class _HeaderGradientFallback extends StatelessWidget {
-  const _HeaderGradientFallback({
-    required this.width,
-    required this.height,
-  });
-
-  final double width;
-  final double height;
-
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: width,
-      height: height,
-      child: Stack(
-        children: [
-          Positioned(
-            left: -width * 0.15,
-            top: -height * 0.4,
-            child: Container(
-              width: width * 0.72,
-              height: width * 0.72,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [Color(0x66C7A4E8), Color(0x00C7A4E8)],
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -width * 0.12,
-            top: -height * 0.25,
-            child: Container(
-              width: width * 0.78,
-              height: width * 0.78,
-              decoration: const BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  colors: [Color(0x88FFE66D), Color(0x00FFE66D)],
-                ),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -442,65 +521,83 @@ class _ScanProductRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 54,
-      child: Stack(
-        children: [
-          Positioned(
-            left: 5,
-            width: tileWidth,
-            top: 0,
-            height: 25,
-            child: _ReceiptTextField(controller: product.name),
-          ),
-          Positioned(
-            left: 5,
-            width: tileWidth * 0.5,
-            top: 27,
-            height: 25,
-            child: _ReceiptTextField(
-              controller: product.price,
-              keyboardType: TextInputType.number,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: SizedBox(
+        height: 54,
+        child: Stack(
+          children: [
+            Positioned(
+              left: 5,
+              width: tileWidth,
+              top: 0,
+              height: 25,
+              child: _ReceiptTextField(controller: product.name),
             ),
-          ),
-          Positioned(
-            left: tileWidth + tileGap,
-            width: tileWidth * 0.35,
-            top: 27,
-            height: 25,
-            child: _ReceiptTextField(
-              controller: product.quantity,
-              textAlign: TextAlign.center,
-              prefixText: 'x',
-              keyboardType: TextInputType.number,
+            Positioned(
+              left: 5,
+              width: tileWidth * 0.5,
+              top: 27,
+              height: 25,
+              child: _ReceiptTextField(
+                controller: product.price,
+                keyboardType: const TextInputType.numberWithOptions(
+                  signed: true,
+                  decimal: false,
+                ),
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'^-?[0-9.]*')),
+                ],
+              ),
             ),
-          ),
-          Positioned(
-            right: 30,
-            top: 27,
-            width: tileWidth * 0.45,
-            child: ValueListenableBuilder<TextEditingValue>(
-              valueListenable: product.price,
-              builder: (context, value, child) {
-                return Text(
-                  _formatReceiptPrice(_parseReceiptPrice(value.text)),
-                  textAlign: TextAlign.right,
-                  style: _receiptRegularStyle,
-                );
-              },
+            Positioned(
+              left: tileWidth + tileGap,
+              width: tileWidth * 0.35,
+              top: 27,
+              height: 25,
+              child: _ReceiptTextField(
+                controller: product.quantity,
+                textAlign: TextAlign.center,
+                prefixText: 'x',
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+              ),
             ),
-          ),
-          Positioned(
-            right: 0,
-            top: 0,
-            child: _ReceiptAssetButton(
-              asset: 'assets/icons/remove.svg',
-              fallbackIcon: Icons.remove_circle,
-              iconColor: const Color(0xFFEB5D5D),
-              onPressed: onRemove,
+            Positioned(
+              right: 30,
+              top: 27,
+              width: tileWidth * 0.45,
+              child: ValueListenableBuilder<TextEditingValue>(
+                valueListenable: product.price,
+                builder: (context, value, child) {
+                  return ValueListenableBuilder<TextEditingValue>(
+                    valueListenable: product.quantity,
+                    builder: (context, qtyValue, _) {
+                      final qty = (int.tryParse(qtyValue.text.trim()) ?? 1)
+                          .clamp(1, 999999);
+                      final subtotal = _parseReceiptPrice(value.text) * qty;
+                      return Text(
+                        _formatReceiptPrice(subtotal),
+                        textAlign: TextAlign.right,
+                        style: _receiptRegularStyle,
+                      );
+                    },
+                  );
+                },
+              ),
             ),
-          ),
-        ],
+            Positioned(
+              right: 0,
+              top: 0,
+              child: _ReceiptAssetButton(
+                asset: 'assets/icons/remove.svg',
+                fallbackIcon: Icons.remove_circle,
+                iconColor: const Color(0xFFEB5D5D),
+                onPressed: onRemove,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -526,7 +623,8 @@ class _ReceiptTotal extends StatelessWidget {
           (sum, product) =>
               sum +
               (_parseReceiptPrice(product.price.text) *
-                  (int.tryParse(product.quantity.text) ?? 1)),
+                  ((int.tryParse(product.quantity.text.trim()) ?? 1)
+                      .clamp(1, 999999))),
         );
         return SizedBox(
           height: 30,
@@ -596,6 +694,7 @@ class _ReceiptTextField extends StatelessWidget {
     this.style = _receiptRegularStyle,
     this.prefixText,
     this.keyboardType,
+    this.inputFormatters,
   });
 
   final TextEditingController controller;
@@ -603,6 +702,7 @@ class _ReceiptTextField extends StatelessWidget {
   final TextStyle style;
   final String? prefixText;
   final TextInputType? keyboardType;
+  final List<TextInputFormatter>? inputFormatters;
 
   @override
   Widget build(BuildContext context) {
@@ -610,13 +710,14 @@ class _ReceiptTextField extends StatelessWidget {
       controller: controller,
       textAlign: textAlign,
       keyboardType: keyboardType,
+      inputFormatters: inputFormatters,
       style: style,
       decoration: InputDecoration(
         prefixText: prefixText,
         prefixStyle: style,
         filled: true,
         fillColor: const Color(0xFFF8F8F8),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         enabledBorder: _receiptInputBorder,
         focusedBorder: _receiptInputBorder.copyWith(
           borderSide: const BorderSide(color: Color(0xFF999999)),
@@ -639,12 +740,14 @@ class _ReceiptDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final safeValue = options.contains(value) ? value : options.first;
+
     return SizedBox(
-      height: 25,
+      height: 36,
       child: DropdownButtonFormField<String>(
-        initialValue: value,
+        initialValue: safeValue,
         isExpanded: true,
-        iconSize: 10,
+        iconSize: 14,
         icon: SvgPicture.asset(
           'assets/icons/dropdown.svg',
           width: 10,
@@ -652,7 +755,7 @@ class _ReceiptDropdown extends StatelessWidget {
           fit: BoxFit.contain,
           placeholderBuilder: (_) => const Icon(
             Icons.arrow_drop_down,
-            size: 10,
+            size: 16,
             color: Color(0xFF1E1E1E),
           ),
         ),
@@ -660,7 +763,7 @@ class _ReceiptDropdown extends StatelessWidget {
         decoration: const InputDecoration(
           filled: true,
           fillColor: Color(0xFFF8F8F8),
-          contentPadding: EdgeInsets.symmetric(horizontal: 5),
+          contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           enabledBorder: _receiptInputBorder,
           focusedBorder: _receiptInputBorder,
         ),
@@ -767,10 +870,13 @@ class _ReceiptDashedPainter extends CustomPainter {
 }
 
 class _ScanProductDraft {
-  _ScanProductDraft({required String name, required String price})
-      : name = TextEditingController(text: name),
+  _ScanProductDraft({
+    required String name,
+    required String price,
+    String quantity = '1',
+  })  : name = TextEditingController(text: name),
         price = TextEditingController(text: price),
-        quantity = TextEditingController(text: '1');
+        quantity = TextEditingController(text: quantity);
 
   final TextEditingController name;
   final TextEditingController price;
@@ -784,17 +890,24 @@ class _ScanProductDraft {
 }
 
 int _parseReceiptPrice(String value) {
-  return int.tryParse(value.replaceAll(RegExp(r'[^0-9]'), '')) ?? 0;
+  final trimmed = value.trim();
+  if (trimmed.isEmpty) return 0;
+  final isNegative = trimmed.startsWith('-') ||
+      (trimmed.startsWith('(') && trimmed.endsWith(')'));
+  final digits = trimmed.replaceAll(RegExp(r'[^0-9]'), '');
+  final parsed = int.tryParse(digits) ?? 0;
+  return isNegative ? -parsed : parsed;
 }
 
 String _formatReceiptPrice(int value) {
-  final digits = value.toString();
+  final isNegative = value < 0;
+  final digits = value.abs().toString();
   final buffer = StringBuffer();
   for (var index = 0; index < digits.length; index++) {
     if (index > 0 && (digits.length - index) % 3 == 0) buffer.write('.');
     buffer.write(digits[index]);
   }
-  return 'Rp$buffer';
+  return isNegative ? '-Rp$buffer' : 'Rp$buffer';
 }
 
 const _receiptInputBorder = OutlineInputBorder(
@@ -805,9 +918,9 @@ const _receiptInputBorder = OutlineInputBorder(
 const _receiptTitleStyle = TextStyle(
   color: Colors.black,
   fontFamily: 'Bricolage Grotesque',
-  fontSize: 25,
+  fontSize: 22,
   fontWeight: FontWeight.w600,
-  height: 0.8,
+  height: 1.1,
 );
 
 const _receiptRegularStyle = TextStyle(

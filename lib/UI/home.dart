@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
-import 'history.dart';
+import '../fitur_history/history_feature_page.dart';
+import '../fitur_scan/scan_feature_page.dart';
 import 'portfolio.dart';
-import 'scan.dart';
 import 'statistic.dart';
 
 void main() {
@@ -130,7 +130,7 @@ class HomeScreen extends StatelessWidget {
                     height: pageHeight,
                     child: Container(
                       decoration: BoxDecoration(
-                        color: const Color(0x55F8F8F8), 
+                        color: const Color(0x55F8F8F8),
                       ),
                     ),
                   ),
@@ -207,7 +207,7 @@ class HomeScreen extends StatelessWidget {
                           () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => const HistoryScreen(),
+                                builder: (_) => const HistoryFeaturePage(),
                               ),
                             );
                           },
@@ -221,10 +221,10 @@ class HomeScreen extends StatelessWidget {
                           () {
                             Navigator.of(context).push(
                               MaterialPageRoute<void>(
-                                builder: (_) => const ScanScreen(),
+                                builder: (_) => const ScanFeaturePage(),
                               ),
-                           );
-                         },
+                            );
+                          },
                     ),
                   ),
                 ],
@@ -242,13 +242,11 @@ class _AppLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      child: Center(
-        child: SvgPicture.asset(
-          'assets/icons/logo.svg', // Sesuaikan dengan path file SVG Anda
-          width: 50,               // Sesuaikan ukuran sesuai kebutuhan
-          height: 50,
-        ),
+    return Center(
+      child: SvgPicture.asset(
+        'assets/icons/logo.svg',
+        width: 50,
+        height: 50,
       ),
     );
   }

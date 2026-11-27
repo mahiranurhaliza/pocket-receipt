@@ -1,26 +1,22 @@
 import 'dart:typed_data';
 
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-
-import 'scanDetailed.dart';
-
-void main() {
-  runApp(
-    const MaterialApp(
-      debugShowCheckedModeBanner: false,
-      home: ScanScreen(),
-    ),
-  );
-}
 
 class ScanScreen extends StatefulWidget {
   const ScanScreen({
     super.key,
+    this.cameraController,
+    this.onToggleFlash,
+    this.onFocusTap,
     this.onImageCaptured,
     this.onImageSelected,
   });
 
+  final CameraController? cameraController;
+  final Future<bool> Function()? onToggleFlash;
+  final Future<void> Function(Offset normalizedPoint)? onFocusTap;
   final ValueChanged<String>? onImageCaptured;
   final ValueChanged<String>? onImageSelected;
 
@@ -33,41 +29,53 @@ class _ScanScreenState extends State<ScanScreen> {
   bool _capturing = false;
   bool _flashEnabled = false;
 
-  void _toggleFlash() {
-    setState(() => _flashEnabled = !_flashEnabled);
+  @override
+  void initState() {
+    super.initState();
+    _syncFlashFromController(widget.cameraController);
   }
 
-  Future<void> _openReceiptEditor({
-    required Uint8List? receiptBytes,
-    required String? callbackPath,
-    required ValueChanged<String>? onCallback,
-  }) async {
-    if (!mounted) return;
-    setState(() {
-      _previewBytes = receiptBytes;
-    });
-    if (callbackPath != null) {
-      onCallback?.call(callbackPath);
+  @override
+  void didUpdateWidget(covariant ScanScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cameraController != widget.cameraController) {
+      _syncFlashFromController(widget.cameraController);
     }
+  }
 
-    await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => ScanDetailedScreen(receiptBytes: receiptBytes),
-      ),
-    );
+  void _syncFlashFromController(CameraController? controller) {
+    if (controller != null && controller.value.isInitialized) {
+      _flashEnabled = controller.value.flashMode == FlashMode.torch;
+    }
+  }
+
+  Future<void> _toggleFlash() async {
+    if (widget.onToggleFlash != null) {
+      final enabled = await widget.onToggleFlash!();
+      if (mounted) {
+        setState(() => _flashEnabled = enabled);
+      }
+      return;
+    }
+    setState(() => _flashEnabled = !_flashEnabled);
   }
 
   Future<void> _captureImage() async {
     if (_capturing) return;
-
     setState(() => _capturing = true);
+
     try {
+      if (widget.onImageCaptured != null) {
+        widget.onImageCaptured!('camera://capture');
+        return;
+      }
+
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (!mounted) return;
-      await _openReceiptEditor(
-        receiptBytes: null,
-        callbackPath: 'simulated://captured_receipt.png',
-        onCallback: widget.onImageCaptured,
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ScanDetailed(receiptBytes: _previewBytes),
+        ),
       );
     } finally {
       if (mounted) setState(() => _capturing = false);
@@ -76,15 +84,20 @@ class _ScanScreenState extends State<ScanScreen> {
 
   Future<void> _selectImage() async {
     if (_capturing) return;
-
     setState(() => _capturing = true);
+
     try {
+      if (widget.onImageSelected != null) {
+        widget.onImageSelected!('gallery://pick');
+        return;
+      }
+
       await Future<void>.delayed(const Duration(milliseconds: 200));
       if (!mounted) return;
-      await _openReceiptEditor(
-        receiptBytes: null,
-        callbackPath: 'simulated://selected_receipt.png',
-        onCallback: widget.onImageSelected,
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute<void>(
+          builder: (_) => ScanDetailed(receiptBytes: _previewBytes),
+        ),
       );
     } finally {
       if (mounted) setState(() => _capturing = false);
@@ -117,40 +130,46 @@ class _ScanScreenState extends State<ScanScreen> {
                     width: constraints.maxWidth,
                     height: pageHeight,
                     child: _ScanPreviewSurface(
+                      cameraController: widget.cameraController,
                       previewBytes: _previewBytes,
                       capturing: _capturing,
                       flashEnabled: _flashEnabled,
+                      onFocusTap: widget.onFocusTap,
                     ),
                   ),
                   Positioned(
                     top: 0,
                     width: constraints.maxWidth,
-                    child: SvgPicture.asset(
-                      'assets/cover/header.svg',
-                      width: contentWidth,
-                      height: 150,
-                      fit: BoxFit.fill,
-                      placeholderBuilder: (_) => _HeaderGradientFallback(
+                    child: IgnorePointer(
+                      child: SvgPicture.asset(
+                        'assets/cover/header.svg',
                         width: contentWidth,
                         height: 150,
+                        fit: BoxFit.fill,
+                        placeholderBuilder: (_) => _HeaderGradientFallback(
+                          width: contentWidth,
+                          height: 150,
+                        ),
                       ),
                     ),
                   ),
                   Positioned(
                     bottom: 0,
                     width: constraints.maxWidth,
-                    child: SvgPicture.asset(
-                      'assets/cover/bg-1.svg',
-                      width: contentWidth,
-                      height: 250,
-                      fit: BoxFit.fill,
-                      placeholderBuilder: (_) => Container(
+                    child: IgnorePointer(
+                      child: SvgPicture.asset(
+                        'assets/cover/bg-1.svg',
                         width: contentWidth,
                         height: 250,
-                        decoration: const BoxDecoration(
-                          color: Color(0xFFECECEC),
-                          borderRadius: BorderRadius.vertical(
-                            top: Radius.circular(48),
+                        fit: BoxFit.fill,
+                        placeholderBuilder: (_) => Container(
+                          width: contentWidth,
+                          height: 250,
+                          decoration: const BoxDecoration(
+                            color: Color(0xFFECECEC),
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(48),
+                            ),
                           ),
                         ),
                       ),
@@ -286,40 +305,118 @@ class _HeaderGradientFallback extends StatelessWidget {
   }
 }
 
-class _ScanPreviewSurface extends StatelessWidget {
+class _ScanPreviewSurface extends StatefulWidget {
   const _ScanPreviewSurface({
+    required this.cameraController,
     required this.previewBytes,
     required this.capturing,
     required this.flashEnabled,
+    this.onFocusTap,
   });
 
+  final CameraController? cameraController;
   final Uint8List? previewBytes;
   final bool capturing;
   final bool flashEnabled;
+  final Future<void> Function(Offset normalizedPoint)? onFocusTap;
+
+  @override
+  State<_ScanPreviewSurface> createState() => _ScanPreviewSurfaceState();
+}
+
+class _ScanPreviewSurfaceState extends State<_ScanPreviewSurface> {
+  Offset? _focusPoint;
+  bool _showFocusRing = false;
+  int _focusToken = 0;
+
+  void _handleTapDown(TapDownDetails details, BoxConstraints constraints) {
+    final controller = widget.cameraController;
+    final canFocusCamera =
+        controller != null && controller.value.isInitialized && !widget.capturing;
+    if (!canFocusCamera) return;
+    if (constraints.maxWidth <= 0 || constraints.maxHeight <= 0) return;
+
+    final local = details.localPosition;
+    final normalized = Offset(
+      (local.dx / constraints.maxWidth).clamp(0.0, 1.0),
+      (local.dy / constraints.maxHeight).clamp(0.0, 1.0),
+    );
+
+    final currentToken = ++_focusToken;
+    setState(() {
+      _focusPoint = local;
+      _showFocusRing = true;
+    });
+
+    widget.onFocusTap?.call(normalized);
+
+    Future<void>.delayed(const Duration(milliseconds: 950), () {
+      if (!mounted || currentToken != _focusToken) return;
+      setState(() => _showFocusRing = false);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (previewBytes != null) {
-      return Image.memory(previewBytes!, fit: BoxFit.cover);
-    }
+    final controller = widget.cameraController;
+    final hasCameraPreview =
+        controller != null && controller.value.isInitialized;
 
-    return Stack(
-      children: [
-        const ColoredBox(
-          color: Color(0xFF1E1E1E),
-          child: SizedBox.expand(),
-        ),
-        if (flashEnabled)
-          const Positioned.fill(
-            child: IgnorePointer(
-              child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.14)),
-            ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTapDown: (details) => _handleTapDown(details, constraints),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (widget.previewBytes != null)
+                Image.memory(widget.previewBytes!, fit: BoxFit.cover)
+              else if (hasCameraPreview)
+                FittedBox(
+                  fit: BoxFit.cover,
+                  child: SizedBox(
+                    width: controller.value.previewSize?.height ?? 1,
+                    height: controller.value.previewSize?.width ?? 1,
+                    child: CameraPreview(controller),
+                  ),
+                )
+              else
+                const ColoredBox(color: Color(0xFF1E1E1E)),
+              if (widget.flashEnabled)
+                const IgnorePointer(
+                  child: ColoredBox(color: Color.fromRGBO(255, 255, 255, 0.14)),
+                ),
+              if (_showFocusRing && _focusPoint != null)
+                Positioned(
+                  left: _focusPoint!.dx - 30,
+                  top: _focusPoint!.dy - 30,
+                  child: IgnorePointer(
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 180),
+                      opacity: _showFocusRing ? 1.0 : 0.0,
+                      child: Container(
+                        width: 60,
+                        height: 60,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: const Color(0xFFFFEC5C),
+                            width: 2,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              if (widget.capturing)
+                const Center(
+                  child: CircularProgressIndicator(color: Color(0xFFE55B5B)),
+                ),
+            ],
           ),
-        if (capturing)
-          const Center(
-            child: CircularProgressIndicator(color: Color(0xFFE55B5B)),
-          ),
-      ],
+        );
+      },
     );
   }
 }
@@ -398,6 +495,24 @@ class _ScanControl extends StatelessWidget {
                   ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class ScanDetailed extends StatelessWidget {
+  const ScanDetailed({super.key, required this.receiptBytes});
+
+  final Uint8List? receiptBytes;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Receipt preview')),
+      body: Center(
+        child: receiptBytes == null
+            ? const Text('No image captured')
+            : Image.memory(receiptBytes!, fit: BoxFit.contain),
       ),
     );
   }

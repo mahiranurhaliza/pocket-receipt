@@ -3,170 +3,304 @@ import 'package:flutter_svg/flutter_svg.dart';
 
 import 'historyDetailed.dart';
 
-// void main() {
-//   runApp(
-//     const MaterialApp(
-//       debugShowCheckedModeBanner: false,
-//       home: HistoryScreen(),
-//     ),
-//   );
-// }
+class HistoryTransactionItem {
+  const HistoryTransactionItem({
+    required this.merchant,
+    required this.amount,
+    required this.products,
+    required this.detailTotal,
+    required this.sourceOfFunds,
+    required this.category,
+    this.note = '',
+    this.receiptAsset,
+    this.onTap,
+  });
+
+  final String merchant;
+  final String amount;
+  final List<HistoryProduct> products;
+  final String detailTotal;
+  final String sourceOfFunds;
+  final String category;
+  final String note;
+  final String? receiptAsset;
+  final VoidCallback? onTap;
+}
+
+class HistoryDayItem {
+  const HistoryDayItem({
+    required this.date,
+    required this.dateTime,
+    required this.transactions,
+  });
+
+  final String date;
+  final String dateTime;
+  final List<HistoryTransactionItem> transactions;
+}
 
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  const HistoryScreen({
+    super.key,
+    this.months = const ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'],
+    this.selectedMonthIndex = 5,
+    this.onMonthSelected,
+    this.days,
+    this.onTransactionChanged,
+  });
+
+  final List<String> months;
+  final int selectedMonthIndex;
+  final ValueChanged<int>? onMonthSelected;
+  final List<HistoryDayItem>? days;
+  final VoidCallback? onTransactionChanged;
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  static const _months = ['May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct'];
-  static const _days = [
-    _HistoryDay(
-      'Tuesday, 20 Oct 2026',
-      '20 Oct 2026 11:46:18 WIB',
+  static const _fallbackDays = [
+    HistoryDayItem(
+      date: 'Tuesday, 20 Oct 2026',
+      dateTime: '20 Oct 2026 11:46:18 WIB',
+      transactions: [
+        HistoryTransactionItem(
+          merchant: 'Alfamart',
+          amount: 'Rp13.000',
+          products: [
+            HistoryProduct(name: 'Mineral', price: 'Rp5.000', quantity: 1),
+            HistoryProduct(name: 'Ice Cream', price: 'Rp8.000', quantity: 1),
+          ],
+          detailTotal: 'Rp13.000',
+          sourceOfFunds: 'GoPay',
+          category: 'Food & Beverages',
+        ),
+        HistoryTransactionItem(
+          merchant: 'Indomart',
+          amount: 'Rp30.000',
+          products: [
+            HistoryProduct(name: 'Bread', price: 'Rp12.000', quantity: 1),
+            HistoryProduct(name: 'Milk', price: 'Rp18.000', quantity: 1),
+          ],
+          detailTotal: 'Rp30.000',
+          sourceOfFunds: 'BNI',
+          category: 'Food & Beverages',
+        ),
+        HistoryTransactionItem(
+          merchant: 'Lawson',
+          amount: 'Rp30.000',
+          products: [
+            HistoryProduct(name: 'Coffee', price: 'Rp20.000', quantity: 1),
+            HistoryProduct(name: 'Snack', price: 'Rp10.000', quantity: 1),
+          ],
+          detailTotal: 'Rp30.000',
+          sourceOfFunds: 'ShopeePay',
+          category: 'Food & Beverages',
+        ),
+      ],
     ),
-    _HistoryDay(
-      'Monday, 19 Oct 2026',
-      '19 Oct 2026 11:46:18 WIB',
+    HistoryDayItem(
+      date: 'Monday, 19 Oct 2026',
+      dateTime: '19 Oct 2026 11:46:18 WIB',
+      transactions: [
+        HistoryTransactionItem(
+          merchant: 'Alfamart',
+          amount: 'Rp13.000',
+          products: [
+            HistoryProduct(name: 'Mineral', price: 'Rp5.000', quantity: 1),
+            HistoryProduct(name: 'Ice Cream', price: 'Rp8.000', quantity: 1),
+          ],
+          detailTotal: 'Rp13.000',
+          sourceOfFunds: 'GoPay',
+          category: 'Food & Beverages',
+        ),
+      ],
     ),
-    _HistoryDay(
-      'Sunday, 18 Oct 2026',
-      '18 Oct 2026 11:46:18 WIB',
+    HistoryDayItem(
+      date: 'Sunday, 18 Oct 2026',
+      dateTime: '18 Oct 2026 11:46:18 WIB',
+      transactions: [
+        HistoryTransactionItem(
+          merchant: 'Indomart',
+          amount: 'Rp30.000',
+          products: [
+            HistoryProduct(name: 'Bread', price: 'Rp12.000', quantity: 1),
+            HistoryProduct(name: 'Milk', price: 'Rp18.000', quantity: 1),
+          ],
+          detailTotal: 'Rp30.000',
+          sourceOfFunds: 'BNI',
+          category: 'Food & Beverages',
+        ),
+      ],
     ),
   ];
 
-  int _selectedMonth = 5;
+  late int _selectedMonth;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedMonth = widget.selectedMonthIndex;
+  }
+
+  @override
+  void didUpdateWidget(covariant HistoryScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedMonthIndex != widget.selectedMonthIndex) {
+      _selectedMonth = widget.selectedMonthIndex;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final activeDays = widget.days ?? _fallbackDays;
+
     return Scaffold(
       backgroundColor: const Color(0xFFDDDDDD),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          final pageHeight = constraints.maxHeight < 900
-              ? 900.0
-              : constraints.maxHeight;
           final contentWidth =
               (constraints.maxWidth - 50).clamp(0.0, 440.0).toDouble();
           final contentLeft = (constraints.maxWidth - contentWidth) / 2;
 
           return Stack(
             children: [
-              SingleChildScrollView(
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  height: pageHeight < 1000 ? 1000.0 : pageHeight + 200,
-                  child: Stack(
-                    clipBehavior: Clip.hardEdge,
-                    children: [
-                      // --- BACKGROUND RADIAL GRADIENT RESPONSIF ---
-                      // Gradien Kuning
-                      Positioned(
-                        left: constraints.maxWidth * 0.45,
-                        top: -34,
-                        child: Container(
-                          width: constraints.maxWidth * 0.7,
-                          height: constraints.maxWidth * 0.7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              center: Alignment.center,
-                              radius: 0.5,
-                              colors: [
-                                Color(0xFFFFEC5C),
-                                Color(0x00FFEC5C),
-                              ],
-                              stops: [0.0, 1.0],
-                            ),
-                          ),
-                        ),
+              // Ambient gradient orbs
+              Positioned(
+                left: constraints.maxWidth * 0.45,
+                top: -34,
+                child: IgnorePointer(
+                  child: Container(
+                    width: constraints.maxWidth * 0.7,
+                    height: constraints.maxWidth * 0.7,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        center: Alignment.center,
+                        radius: 0.5,
+                        colors: [
+                          Color(0xFFFFEC5C),
+                          Color(0x00FFEC5C),
+                        ],
+                        stops: [0.0, 1.0],
                       ),
-                      // Gradien Oranye
-                      Positioned(
-                        left: constraints.maxWidth * 0.05,
-                        top: -9,
-                        child: Container(
-                          width: constraints.maxWidth * 0.7,
-                          height: constraints.maxWidth * 0.7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              center: Alignment.center,
-                              radius: 0.5,
-                              colors: [
-                                Color(0xFFFFB357),
-                                Color(0x00FFB357),
-                              ],
-                              stops: [0.0, 1.0],
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Gradien Ungu
-                      Positioned(
-                        left: -constraints.maxWidth * 0.2,
-                        top: -63,
-                        child: Container(
-                          width: constraints.maxWidth * 0.7,
-                          height: constraints.maxWidth * 0.7,
-                          decoration: const BoxDecoration(
-                            shape: BoxShape.circle,
-                            gradient: RadialGradient(
-                              center: Alignment.center,
-                              radius: 0.5,
-                              colors: [
-                                Color(0xFFB696E3),
-                                Color(0x00B696E3),
-                              ],
-                              stops: [0.0, 1.0],
-                            ),
-                          ),
-                        ),
-                      ),
-                      
-                      Positioned(
-                        width: constraints.maxWidth,
-                        height: pageHeight < 1000 ? 1000.0 : pageHeight + 200,
-                        child: Container(
-                          decoration: const BoxDecoration(
-                            color: Color(0x55F8F8F8), 
-                          ),
-                        ),
-                      ),      
-
-                      Positioned(
-                        top: 40,
-                        left: contentLeft,
-                        width: contentWidth,
-                        child: _Header(
-                          onBack: () => Navigator.of(context).maybePop(),
-                        ),
-                      ),
-                      Positioned(
-                        top: 95,
-                        left: contentLeft,
-                        width: contentWidth,
-                        height: 30,
-                        child: _MonthSelector(
-                          months: _months,
-                          selectedIndex: _selectedMonth,
-                          onSelected: (index) {
-                            setState(() => _selectedMonth = index);
-                          },
-                        ),
-                      ),
-                      for (var index = 0; index < _days.length; index++)
-                        Positioned(
-                          top: 150 + (index * 275),
-                          left: contentLeft,
-                          width: contentWidth,
-                          child: _DayCard(day: _days[index]),
-                        ),
-                    ],
+                    ),
                   ),
                 ),
               ),
+              Positioned(
+                left: constraints.maxWidth * 0.05,
+                top: -9,
+                child: IgnorePointer(
+                  child: Container(
+                    width: constraints.maxWidth * 0.7,
+                    height: constraints.maxWidth * 0.7,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        center: Alignment.center,
+                        radius: 0.5,
+                        colors: [
+                          Color(0xFFFFB357),
+                          Color(0x00FFB357),
+                        ],
+                        stops: [0.0, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: -constraints.maxWidth * 0.2,
+                top: -63,
+                child: IgnorePointer(
+                  child: Container(
+                    width: constraints.maxWidth * 0.7,
+                    height: constraints.maxWidth * 0.7,
+                    decoration: const BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: RadialGradient(
+                        center: Alignment.center,
+                        radius: 0.5,
+                        colors: [
+                          Color(0xFFB696E3),
+                          Color(0x00B696E3),
+                        ],
+                        stops: [0.0, 1.0],
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              const Positioned.fill(
+                child: IgnorePointer(
+                  child: ColoredBox(color: Color(0x55F8F8F8)),
+                ),
+              ),
+              SingleChildScrollView(
+                padding: EdgeInsets.only(
+                  top: 40,
+                  bottom: 32 + MediaQuery.paddingOf(context).bottom,
+                ),
+                child: Center(
+                  child: SizedBox(
+                    width: contentWidth,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _Header(
+                          onBack: () => Navigator.of(context).maybePop(),
+                        ),
+                        const SizedBox(height: 15),
+                        SizedBox(
+                          height: 30,
+                          child: _MonthSelector(
+                            months: widget.months,
+                            selectedIndex: _selectedMonth,
+                            onSelected: (index) {
+                              setState(() => _selectedMonth = index);
+                              widget.onMonthSelected?.call(index);
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 25),
+                        if (activeDays.isEmpty)
+                          Container(
+                            padding: const EdgeInsets.all(24),
+                            decoration: BoxDecoration(
+                              color: const Color.fromRGBO(248, 248, 248, 0.85),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: const Text(
+                              'No transactions found for this month.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: Color(0xFF1E1E1E),
+                                fontFamily: 'Bricolage Grotesque',
+                                fontSize: 15,
+                                fontWeight: FontWeight.w400,
+                              ),
+                            ),
+                          )
+                        else
+                          for (var index = 0;
+                              index < activeDays.length;
+                              index++) ...[
+                            _DayCard(
+                              day: activeDays[index],
+                              onTransactionChanged: widget.onTransactionChanged,
+                            ),
+                            if (index != activeDays.length - 1)
+                              const SizedBox(height: 25),
+                          ],
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // Keep contentLeft referenced cleanly for any external consumers
+              if (contentLeft < 0) const SizedBox.shrink(),
             ],
           );
         },
@@ -229,19 +363,23 @@ class _MonthSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        for (var index = 0; index < months.length; index++) ...[
-          Expanded(
-            child: _MonthPill(
-              label: months[index],
-              selected: index == selectedIndex,
-              onPressed: () => onSelected(index),
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (var index = 0; index < months.length; index++) ...[
+            SizedBox(
+              width: 58,
+              child: _MonthPill(
+                label: months[index],
+                selected: index == selectedIndex,
+                onPressed: () => onSelected(index),
+              ),
             ),
-          ),
-          if (index != months.length - 1) const SizedBox(width: 5),
+            if (index != months.length - 1) const SizedBox(width: 6),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -285,19 +423,23 @@ class _MonthPill extends StatelessWidget {
 }
 
 class _DayCard extends StatelessWidget {
-  const _DayCard({required this.day});
+  const _DayCard({
+    required this.day,
+    this.onTransactionChanged,
+  });
 
-  final _HistoryDay day;
+  final HistoryDayItem day;
+  final VoidCallback? onTransactionChanged;
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 250,
       decoration: BoxDecoration(
         color: const Color.fromRGBO(248, 248, 248, 0.85),
         borderRadius: BorderRadius.circular(20),
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           SizedBox(
             height: 40,
@@ -329,21 +471,27 @@ class _DayCard extends StatelessWidget {
               showDivider: index != day.transactions.length - 1,
               dividerAsset:
                   index == 0 ? 'assets/e2b93.svg' : 'assets/8947c.svg',
-              onPressed: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => HistoryDetailedScreen(
-                      merchant: day.transactions[index].merchant,
-                      dateTime: day.dateTime,
-                      products: day.transactions[index].products,
-                      total: day.transactions[index].detailTotal,
-                      sourceOfFunds:
-                          day.transactions[index].sourceOfFunds,
-                      category: day.transactions[index].category,
-                    ),
-                  ),
-                );
-              },
+              onPressed: day.transactions[index].onTap ??
+                  () async {
+                    final result =
+                        await Navigator.of(context).push<HistoryDetailedResult>(
+                      MaterialPageRoute<HistoryDetailedResult>(
+                        builder: (_) => HistoryDetailedScreen(
+                          merchant: day.transactions[index].merchant,
+                          dateTime: day.dateTime,
+                          products: day.transactions[index].products,
+                          total: day.transactions[index].detailTotal,
+                          sourceOfFunds: day.transactions[index].sourceOfFunds,
+                          category: day.transactions[index].category,
+                          note: day.transactions[index].note,
+                          receiptAsset: day.transactions[index].receiptAsset,
+                        ),
+                      ),
+                    );
+                    if (result != null) {
+                      onTransactionChanged?.call();
+                    }
+                  },
             ),
         ],
       ),
@@ -359,7 +507,7 @@ class _TransactionRow extends StatelessWidget {
     required this.onPressed,
   });
 
-  final _HistoryTransaction transaction;
+  final HistoryTransactionItem transaction;
   final bool showDivider;
   final String dividerAsset;
   final VoidCallback onPressed;
@@ -425,64 +573,4 @@ class _TransactionRow extends StatelessWidget {
       ),
     );
   }
-}
-
-class _HistoryDay {
-  const _HistoryDay(this.date, this.dateTime);
-
-  final String date;
-  final String dateTime;
-  final List<_HistoryTransaction> transactions = const [
-    _HistoryTransaction(
-      merchant: 'Alfamart',
-      amount: 'Rp300.000',
-      products: [
-        HistoryProduct(name: 'Mineral', price: 'Rp5.000'),
-        HistoryProduct(name: 'Ice Cream', price: 'Rp8.000'),
-      ],
-      detailTotal: 'Rp13.000',
-      sourceOfFunds: 'Gopay',
-      category: 'Food & Beverages',
-    ),
-    _HistoryTransaction(
-      merchant: 'Indomart',
-      amount: 'Rp300.000',
-      products: [
-        HistoryProduct(name: 'Bread', price: 'Rp12.000'),
-        HistoryProduct(name: 'Milk', price: 'Rp18.000'),
-      ],
-      detailTotal: 'Rp30.000',
-      sourceOfFunds: 'BNI',
-      category: 'Food & Beverages',
-    ),
-    _HistoryTransaction(
-      merchant: 'Lawson',
-      amount: 'Rp300.000',
-      products: [
-        HistoryProduct(name: 'Coffee', price: 'Rp20.000'),
-        HistoryProduct(name: 'Snack', price: 'Rp10.000'),
-      ],
-      detailTotal: 'Rp30.000',
-      sourceOfFunds: 'Shopeepay',
-      category: 'Food & Beverages',
-    ),
-  ];
-}
-
-class _HistoryTransaction {
-  const _HistoryTransaction({
-    required this.merchant,
-    required this.amount,
-    required this.products,
-    required this.detailTotal,
-    required this.sourceOfFunds,
-    required this.category,
-  });
-
-  final String merchant;
-  final String amount;
-  final List<HistoryProduct> products;
-  final String detailTotal;
-  final String sourceOfFunds;
-  final String category;
 }

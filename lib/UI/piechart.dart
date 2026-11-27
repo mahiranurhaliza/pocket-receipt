@@ -94,12 +94,12 @@ class ResponsivePieChart extends StatelessWidget {
               ? constraints.maxWidth
               : constraints.maxHeight,
         );
-        //final double chartSize = availableSize * chartSize;
+        final double responsiveChartSize = math.min(chartSize, availableSize);
 
         return Center(
           child: SizedBox(
-            width: chartSize,
-            height: chartSize,
+            width: responsiveChartSize,
+            height: responsiveChartSize,
             child: CustomPaint(
               painter: DonutChartPainter(
                 categories: categories,
